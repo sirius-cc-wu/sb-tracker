@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sb-tracker"
+version = "0.1.0"
+description = "A minimal, standalone issue tracker for individuals. No git hooks, no complex dependencies, just one JSON file."
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Simple Beads Contributors"}
+]
+keywords = ["task-tracker", "issues", "simple", "standalone"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.7"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/yourusername/sb-tracker"
+Documentation = "https://github.com/yourusername/sb-tracker#readme"
+
+[project.scripts]
+sb = "sb_tracker.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages]
+find = {where = ["src"]}
