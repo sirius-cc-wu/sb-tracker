@@ -43,6 +43,56 @@ def init():
         return
     save_db({"issues": []})
     print(f"Initialized Simple Beads in {DB_FILE}")
+    
+    # Create or append to AGENTS.md
+    agents_md_content = """## Using SB Tracker
+
+This project uses [SB Tracker](https://github.com/yourusername/sb-tracker) for task tracking.
+
+**Agents**: Please use the `sb` command to track work:
+- `sb add "Task title" [priority] [description]` - Create a task
+- `sb list` - View open tasks
+- `sb ready` - See tasks ready to work on
+- `sb done <id>` - Mark a task as complete
+- `sb promote <id>` - Generate a summary of task progress
+
+Run `sb --help` or check the README for more commands.
+
+### Landing the Plane (Session Completion)
+
+**When ending a work session**, complete these steps:
+
+1. **File remaining work** - Create issues for any follow-up tasks
+2. **Update task status** - Mark completed work as done with `sb done <id>`
+3. **Promote for handoff** - Run `sb promote <id>` on significant tasks to document progress
+4. **Clean up** - Run `sb compact` to archive closed tasks and keep the tracker lean
+
+**CRITICAL RULES:**
+- Always update task status before ending a session
+- Use `sb promote` to hand off context about what was accomplished
+- Never leave tasks in an ambiguous state—close them or create sub-tasks
+"""
+    
+    agents_md_path = os.path.join(os.path.dirname(DB_FILE), "AGENTS.md")
+    
+    if os.path.exists(agents_md_path):
+        # Check if sb-tracker section already exists
+        with open(agents_md_path, "r") as f:
+            content = f.read()
+        
+        if "SB Tracker" not in content:
+            # Append to existing file
+            with open(agents_md_path, "a") as f:
+                if not content.endswith("\n"):
+                    f.write("\n")
+                f.write("\n" + agents_md_content)
+            print(f"Appended SB Tracker instructions to {agents_md_path}")
+        # else: already has SB Tracker section, don't duplicate
+    else:
+        # Create new AGENTS.md
+        with open(agents_md_path, "w") as f:
+            f.write(agents_md_content)
+        print(f"Created {agents_md_path} with SB Tracker instructions")
 
 def search_issues(keyword, as_json=False):
     db = load_db()
