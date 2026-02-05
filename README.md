@@ -25,7 +25,7 @@ pip install sb-tracker
 ### From Source
 
 ```bash
-git clone https://github.com/yourusername/sb-tracker.git
+git clone https://github.com/sirius-cc-wu/sb-tracker.git
 cd sb-tracker
 pip install -e .
 ```

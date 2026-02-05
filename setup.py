@@ -15,7 +15,7 @@ setup(
     description="A minimal, standalone issue tracker for individuals",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/sb-tracker",
+    url="https://github.com/sirius-cc-wu/sb-tracker",
     license="MIT",
     classifiers=[
         "Development Status :: 4 - Beta",

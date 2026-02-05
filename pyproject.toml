@@ -30,8 +30,8 @@ requires-python = ">=3.7"
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/yourusername/sb-tracker"
-Documentation = "https://github.com/yourusername/sb-tracker#readme"
+Homepage = "https://github.com/sirius-cc-wu/sb-tracker"
+Documentation = "https://github.com/sirius-cc-wu/sb-tracker#readme"
 
 [project.scripts]
 sb = "sb_tracker.cli:main"

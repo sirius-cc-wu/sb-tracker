@@ -47,7 +47,7 @@ def init():
     # Create or append to AGENTS.md
     agents_md_content = """## Using SB Tracker
 
-This project uses [SB Tracker](https://github.com/yourusername/sb-tracker) for task tracking.
+This project uses [SB Tracker](https://github.com/sirius-cc-wu/sb-tracker) for task tracking.
 
 **Agents**: Please use the `sb` command to track work:
 - `sb add "Task title" [priority] [description]` - Create a task
@@ -86,18 +86,18 @@ Run `sb --help` or check the README for more commands.
     agents_md_path = os.path.join(os.path.dirname(DB_FILE), "AGENTS.md")
     
     if os.path.exists(agents_md_path):
-        # Check if sb-tracker section already exists
+        # Check if "Using SB Tracker" section already exists
         with open(agents_md_path, "r") as f:
             content = f.read()
         
-        if "SB Tracker" not in content:
+        if "## Using SB Tracker" not in content:
             # Append to existing file
             with open(agents_md_path, "a") as f:
                 if not content.endswith("\n"):
                     f.write("\n")
                 f.write("\n" + agents_md_content)
             print(f"Appended SB Tracker instructions to {agents_md_path}")
-        # else: already has SB Tracker section, don't duplicate
+        # else: already has "Using SB Tracker" section, don't duplicate
     else:
         # Create new AGENTS.md
         with open(agents_md_path, "w") as f:
