@@ -36,6 +36,16 @@ pip install -e /path/to/sb-tracker
 
 The skill uses the `sb` command (installed via `pip install sb-tracker`).
 
+### Priority Levels
+
+When using `sb add` or `sb update`, specify priority as a **numeric value** (0-3):
+- **0** = P0 (Critical) - Blocking other work
+- **1** = P1 (High) - Important, do soon
+- **2** = P2 (Medium) - Normal priority (default)
+- **3** = P3 (Low) - Nice to have
+
+Example: `sb add "Fix critical bug" 0 "This blocks release"`
+
 ### Create and Modify
 - **`add`**: `sb add <title> [priority] [desc] [parent_id]`
 - **`update`**: `sb update <id> [title=...] [desc=...] [p=...] [parent=...]`

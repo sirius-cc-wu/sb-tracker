@@ -56,6 +56,16 @@ This project uses [SB Tracker](https://github.com/yourusername/sb-tracker) for t
 - `sb done <id>` - Mark a task as complete
 - `sb promote <id>` - Generate a summary of task progress
 
+### Priority Levels (Required Numeric Values)
+
+When using `sb add`, specify priority as a **numeric value** (0-3):
+- **0** = P0 (Critical) - Blocking other work
+- **1** = P1 (High) - Important, do soon
+- **2** = P2 (Medium) - Normal priority (default)
+- **3** = P3 (Low) - Nice to have
+
+Example: `sb add "Fix critical bug" 0 "This blocks release"`
+
 Run `sb --help` or check the README for more commands.
 
 ### Landing the Plane (Session Completion)
