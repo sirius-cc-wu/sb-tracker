@@ -7,13 +7,19 @@ A lightweight, standalone task tracker that stores state in a local `.sb.json` f
 The `sb` command is installed via the `sb-tracker` Python package:
 
 ```bash
-pip install sb-tracker
+pipx install sb-tracker
 ```
 
 Or install in development mode from the standalone package:
 
 ```bash
 pip install -e /path/to/sb-tracker
+```
+
+Verify installation:
+
+```bash
+sb --help
 ```
 
 ## Quick Start

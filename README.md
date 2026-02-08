@@ -16,18 +16,32 @@ A lightweight, standalone task tracker that stores state in a local `.sb.json` f
 
 ## Installation
 
-### From PyPI (when published)
+### Recommended (pipx)
+
+```bash
+pipx install sb-tracker
+```
+
+`pipx` keeps the `sb` CLI isolated while exposing it on your shell `PATH`.
+
+### Alternative (pip)
 
 ```bash
 pip install sb-tracker
 ```
 
-### From Source
+### From Source (development)
 
 ```bash
 git clone https://github.com/sirius-cc-wu/sb-tracker.git
 cd sb-tracker
 pip install -e .
+```
+
+Verify installation:
+
+```bash
+sb --help
 ```
 
 ## Quick Start
@@ -237,6 +251,17 @@ MIT License - See LICENSE file for details
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Troubleshooting
+
+### `sb: command not found`
+
+Install with `pipx` and verify your shell can find `sb`:
+
+```bash
+pipx install sb-tracker
+sb --help
+```
+
+If you installed with `pip`, ensure the install location is on your `PATH`.
 
 ### `.sb.json` not found
 

@@ -49,6 +49,13 @@ def init():
 
 This project uses [SB Tracker](https://github.com/sirius-cc-wu/sb-tracker) for task tracking.
 
+### Prerequisite
+
+Install `sb` and ensure it is on your `PATH` before using these commands:
+- `pipx install sb-tracker` (recommended for CLI tools)
+- or `pip install sb-tracker`
+- verify with `sb --help`
+
 **Agents**: Please use the `sb` command to track work:
 - `sb add "Task title" [priority] [description]` - Create a task
 - `sb list` - View open tasks
