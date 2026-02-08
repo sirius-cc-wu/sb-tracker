@@ -77,8 +77,8 @@ To maintain perfect context across sessions, agents should follow this loop:
 
 1. **Onboarding**: At the start of a task, run `sb list --json` or `sb ready` to understand the current state.
 2. **Execution**: Focus on the highest priority `ready` tasks.
-3. **Updating**: As you complete sub-steps, run `sb done <id>`.
-4. **Verification**: Run project tests or take a screenshot to confirm the work is complete.
+3. **Verification**: Run project tests or take a screenshot to confirm the work is complete.
+4. **Updating**: As you complete sub-steps, run `sb done <id>`.
 5. **Clean up**: Run `sb compact` to remove closed tasks before committing.
 6. **Handoff**: Before ending a session, run `sb promote <id>` to provide the user with a clear summary of what was accomplished.
 
