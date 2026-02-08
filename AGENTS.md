@@ -69,7 +69,7 @@ Example: `sb add "Fix critical bug" 0 "This blocks release"`
 
 ### Statistics and Maintenance
 - **`stats`**: Overview of progress and priority breakdown.
-- **`compact`**: Archive closed tasks to save tokens and context space.
+- **`compact`**: Remove closed tasks to save tokens and context space.
 
 ## Agent Operational Loop
 
@@ -78,8 +78,9 @@ To maintain perfect context across sessions, agents should follow this loop:
 1. **Onboarding**: At the start of a task, run `sb list --json` or `sb ready` to understand the current state.
 2. **Execution**: Focus on the highest priority `ready` tasks.
 3. **Updating**: As you complete sub-steps, run `sb done <id>`.
-4. **Handoff**: Before ending a session, run `sb stats` to see the remaining work and `sb promote <id>` to provide the user with a clear summary of what was accomplished.
-5. **Context Management**: Periodically run `sb compact` if the task list grows beyond ~20 closed items to keep your context window efficient.
+4. **Verification**: Run project tests or take a screenshot to confirm the work is complete.
+5. **Clean up**: Run `sb compact` to remove closed tasks before committing.
+6. **Handoff**: Before ending a session, run `sb promote <id>` to provide the user with a clear summary of what was accomplished.
 
 ### Close Issue
 `sb done <id>`

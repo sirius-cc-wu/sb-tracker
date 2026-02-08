@@ -80,9 +80,10 @@ Run `sb --help` or check the README for more commands.
 **When ending a work session**, complete these steps:
 
 1. **File remaining work** - Create issues for any follow-up tasks
-2. **Update task status** - Mark completed work as done with `sb done <id>`
-3. **Promote for handoff** - Run `sb promote <id>` on significant tasks to document progress
-4. **Clean up** - Run `sb compact` to archive closed tasks and keep the tracker lean
+2. **Verify** - Run project tests or take a screenshot to confirm the work is complete
+3. **Update task status** - Mark completed work as done with `sb done <id>`
+4. **Clean up** - Run `sb compact` to remove closed tasks before committing
+5. **Promote for handoff** - Run `sb promote <id>` on significant tasks to document progress
 
 **CRITICAL RULES:**
 - Always update task status before ending a session
@@ -369,27 +370,11 @@ def compact():
         print("No closed issues to compact.")
         return
 
-    summary_parts = []
-    for i in closed_issues:
-        summary_parts.append(f"{i['id']}: {i['title']}")
-    
-    summary_text = f"Compacted {len(closed_issues)} issues on {datetime.now().strftime('%Y-%m-%d %H:%M')}: " + ", ".join(summary_parts)
-    
-    if "compaction_log" not in db:
-        db["compaction_log"] = []
-    
-    db["compaction_log"].append({
-        "timestamp": datetime.now().isoformat(),
-        "count": len(closed_issues),
-        "summary": summary_text
-    })
-    
     # Remove closed issues
     db["issues"] = [i for i in db["issues"] if i["status"] != "closed"]
     
     save_db(db)
-    print(f"Successfully compacted {len(closed_issues)} issues.")
-    print(f"Archive entry added to compaction_log.")
+    print(f"Successfully removed {len(closed_issues)} closed issues.")
 
 def update_status(issue_id, status):
     db = load_db()
@@ -459,7 +444,7 @@ def main():
         print("  ready [--json]            List issues with no open blockers")
         print("  search <keyword> [--json] Search titles and descriptions")
         print("  stats                     Show task statistics")
-        print("  compact                   Archive closed issues")
+        print("  compact                   Remove closed issues")
         print("  dep <child> <parent>      Add dependency")
         print("  update <id> [field=val]   Update title, desc, p, parent")
         print("  promote <id>              Export task as Markdown")
