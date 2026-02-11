@@ -126,6 +126,9 @@ sb done sb-1
 4. **End session cleanly**: Verify final state and hand off
    ```bash
    sb compact         # optional
+   # If your agent environment has a commit skill, use it here.
+   git add -A
+   git commit -m "[scope]: complete <task-id>"
    sb list --all
    ```
    Then provide a short summary of completed work and what remains.

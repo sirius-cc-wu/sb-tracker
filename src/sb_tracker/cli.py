@@ -83,12 +83,19 @@ Run `sb --help` for more commands.
 2. **Verify** - Run project tests or take a screenshot to confirm the work is complete
 3. **Update task status** - Mark completed work as done with `sb done <id>`
 4. **Clean up** - Run `sb compact` if you want to remove closed tasks
-5. **Final state check** - Run `sb list --all` and confirm no tasks are left ambiguous
-6. **Handoff** - Share a short summary of what was completed and what remains
+5. **Commit local changes** - Commit code and `.sb.json` together. If a `commit` skill is available in the agent environment, use it. Otherwise run:
+   ```bash
+   git add -A
+   git commit -m "[scope]: complete <task-id>"
+   ```
+6. **Final state check** - Run `sb list --all` and confirm no tasks are left ambiguous
+7. **Handoff** - Share a short summary of what was completed and what remains
 
 **CRITICAL RULES:**
 - Always update task status before ending a session
 - Never leave tasks in an ambiguous state; close them or create explicit sub-tasks
+- Do not leave finished work uncommitted; commit issue-by-issue so progress is resumable
+- Prefer the `commit` skill for commits when available; use raw git commit only as fallback
 - `sb promote` is optional and only needed when you want a Markdown report
 """
     

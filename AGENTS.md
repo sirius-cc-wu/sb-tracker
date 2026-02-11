@@ -80,7 +80,8 @@ To maintain perfect context across sessions, agents should follow this loop:
 3. **Verification**: Run project tests or take a screenshot to confirm the work is complete.
 4. **Updating**: As you complete sub-steps, run `sb done <id>`.
 5. **Clean up**: Run `sb compact` to remove closed tasks before committing.
-6. **Handoff**: Before ending a session, run `sb list --all` and provide a short summary of what was completed and what remains.
+6. **Commit**: Commit code and `.sb.json` together so the tracker state matches the code state.
+7. **Handoff**: Before ending a session, run `sb list --all` and provide a short summary of what was completed and what remains.
 
 ## Landing the Plane (Session Completion)
 
@@ -90,12 +91,19 @@ To maintain perfect context across sessions, agents should follow this loop:
 2. **Verify** - Run project tests or take a screenshot to confirm the work is complete
 3. **Update task status** - Mark completed work as done with `sb done <id>`
 4. **Clean up** - Run `sb compact` if you want to remove closed tasks
-5. **Final state check** - Run `sb list --all` and confirm there are no ambiguous task states
-6. **Handoff** - Share a brief summary of completed work and the next task to pick up
+5. **Commit local changes** - Commit code and `.sb.json` together. If a `commit` skill is available in the agent environment, use it. Otherwise run:
+   ```bash
+   git add -A
+   git commit -m "[scope]: complete <task-id>"
+   ```
+6. **Final state check** - Run `sb list --all` and confirm there are no ambiguous task states
+7. **Handoff** - Share a brief summary of completed work and the next task to pick up
 
 **CRITICAL RULES:**
 - Always update task status before ending a session
 - Never leave tasks in an ambiguous state; close them or create explicit follow-up sub-tasks
+- Do not leave finished work uncommitted; commit issue-by-issue so progress is resumable
+- Prefer the `commit` skill for commits when available; use raw git commit only as fallback
 - `sb promote` is optional and only for generating a Markdown report when needed
 
 ### Close Issue
