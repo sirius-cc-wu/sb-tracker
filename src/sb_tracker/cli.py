@@ -86,7 +86,7 @@ Run `sb --help` for more commands.
 5. **Commit local changes** - Commit code and `.sb.json` together. If a `commit` skill is available in the agent environment, use it. Otherwise run:
    ```bash
    git add -A
-   git commit -m "[scope]: complete <task-id>"
+   git commit -m "type(scope): description of change"
    ```
 6. **Final state check** - Run `sb list --all` and confirm no tasks are left ambiguous
 7. **Handoff** - Share a short summary of what was completed and what remains

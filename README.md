@@ -128,7 +128,7 @@ sb done sb-1
    sb compact         # optional
    # If your agent environment has a commit skill, use it here.
    git add -A
-   git commit -m "[scope]: complete <task-id>"
+   git commit -m "type(scope): description of change"
    sb list --all
    ```
    Then provide a short summary of completed work and what remains.
