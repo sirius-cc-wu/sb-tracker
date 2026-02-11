@@ -95,7 +95,7 @@ sb done sb-1
 ### Reporting and Maintenance
 
 - **`show <id> [--json]`**: Display task details with audit log
-- **`promote <id>`**: Generate Markdown summary of task and sub-tasks
+- **`promote <id>`**: Optional Markdown summary of task and sub-tasks
 - **`stats`**: Overview of progress and priority breakdown
 - **`compact`**: Archive closed tasks to save space
 - **`done <id>`**: Mark task as closed
@@ -123,10 +123,12 @@ sb done sb-1
    sb done sb-1.2
    ```
 
-4. **Report**: Generate summary when handing off
+4. **End session cleanly**: Verify final state and hand off
    ```bash
-   sb promote sb-1
+   sb compact         # optional
+   sb list --all
    ```
+   Then provide a short summary of completed work and what remains.
 
 ### Task ID Format
 
@@ -226,6 +228,8 @@ sb-2         1  open                    Deploy to production
 ```
 
 ### Task Reporting
+
+Optional when you want a Markdown report for sharing:
 
 ```bash
 $ sb promote sb-1

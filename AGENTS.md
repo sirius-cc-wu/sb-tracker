@@ -80,7 +80,23 @@ To maintain perfect context across sessions, agents should follow this loop:
 3. **Verification**: Run project tests or take a screenshot to confirm the work is complete.
 4. **Updating**: As you complete sub-steps, run `sb done <id>`.
 5. **Clean up**: Run `sb compact` to remove closed tasks before committing.
-6. **Handoff**: Before ending a session, run `sb promote <id>` to provide the user with a clear summary of what was accomplished.
+6. **Handoff**: Before ending a session, run `sb list --all` and provide a short summary of what was completed and what remains.
+
+## Landing the Plane (Session Completion)
+
+**When ending a work session**, complete these steps:
+
+1. **File remaining work** - Create issues for any follow-up tasks
+2. **Verify** - Run project tests or take a screenshot to confirm the work is complete
+3. **Update task status** - Mark completed work as done with `sb done <id>`
+4. **Clean up** - Run `sb compact` if you want to remove closed tasks
+5. **Final state check** - Run `sb list --all` and confirm there are no ambiguous task states
+6. **Handoff** - Share a brief summary of completed work and the next task to pick up
+
+**CRITICAL RULES:**
+- Always update task status before ending a session
+- Never leave tasks in an ambiguous state; close them or create explicit follow-up sub-tasks
+- `sb promote` is optional and only for generating a Markdown report when needed
 
 ### Close Issue
 `sb done <id>`

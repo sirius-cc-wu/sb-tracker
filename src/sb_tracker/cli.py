@@ -61,7 +61,7 @@ Install `sb` and ensure it is on your `PATH` before using these commands:
 - `sb list` - View open tasks
 - `sb ready` - See tasks ready to work on
 - `sb done <id>` - Mark a task as complete
-- `sb promote <id>` - Generate a summary of task progress
+- `sb promote <id>` - Optional: generate a Markdown summary of task progress
 
 ### Priority Levels (Required Numeric Values)
 
@@ -82,13 +82,14 @@ Run `sb --help` for more commands.
 1. **File remaining work** - Create issues for any follow-up tasks
 2. **Verify** - Run project tests or take a screenshot to confirm the work is complete
 3. **Update task status** - Mark completed work as done with `sb done <id>`
-4. **Clean up** - Run `sb compact` to remove closed tasks before committing
-5. **Promote for handoff** - Run `sb promote <id>` on significant tasks to document progress
+4. **Clean up** - Run `sb compact` if you want to remove closed tasks
+5. **Final state check** - Run `sb list --all` and confirm no tasks are left ambiguous
+6. **Handoff** - Share a short summary of what was completed and what remains
 
 **CRITICAL RULES:**
 - Always update task status before ending a session
-- Use `sb promote` to hand off context about what was accomplished
-- Never leave tasks in an ambiguous state—close them or create sub-tasks
+- Never leave tasks in an ambiguous state; close them or create explicit sub-tasks
+- `sb promote` is optional and only needed when you want a Markdown report
 """
     
     agents_md_path = os.path.join(os.path.dirname(DB_FILE), "AGENTS.md")
