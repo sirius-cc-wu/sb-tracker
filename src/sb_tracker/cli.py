@@ -442,24 +442,27 @@ def show_issue(issue_id, as_json=False):
             return
     print(f"Error: Issue {issue_id} not found.")
 
+def print_help():
+    print("Usage: sb <command> [args]")
+    print("Commands:")
+    print("  init                      Initialize .sb.json")
+    print("  add <title> [p] [desc] [parent]   Add issue")
+    print("  list [--all] [--json]     List issues")
+    print("  ready [--json]            List issues with no open blockers")
+    print("  search <keyword> [--json] Search titles and descriptions")
+    print("  stats                     Show task statistics")
+    print("  compact                   Remove closed issues")
+    print("  dep <child> <parent>      Add dependency")
+    print("  update <id> [field=val]   Update title, desc, p, parent")
+    print("  promote <id>              Export task as Markdown")
+    print("  show <id> [--json]        Show issue details")
+    print("  done <id>                 Close issue")
+    print("  rm <id>                   Delete issue")
+    print("  version                   Show version")
+
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: sb <command> [args]")
-        print("Commands:")
-        print("  init                      Initialize .sb.json")
-        print("  add <title> [p] [desc] [parent]   Add issue")
-        print("  list [--all] [--json]     List issues")
-        print("  ready [--json]            List issues with no open blockers")
-        print("  search <keyword> [--json] Search titles and descriptions")
-        print("  stats                     Show task statistics")
-        print("  compact                   Remove closed issues")
-        print("  dep <child> <parent>      Add dependency")
-        print("  update <id> [field=val]   Update title, desc, p, parent")
-        print("  promote <id>              Export task as Markdown")
-        print("  show <id> [--json]        Show issue details")
-        print("  done <id>                 Close issue")
-        print("  rm <id>                   Delete issue")
-        print("  version                   Show version")
+    if len(sys.argv) < 2 or sys.argv[1] in ["help", "--help", "-h"]:
+        print_help()
         return
 
     cmd = sys.argv[1]
