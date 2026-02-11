@@ -73,7 +73,7 @@ When using `sb add`, specify priority as a **numeric value** (0-3):
 
 Example: `sb add "Fix critical bug" 0 "This blocks release"`
 
-Run `sb --help` or check the README for more commands.
+Run `sb --help` for more commands.
 
 ### Landing the Plane (Session Completion)
 
