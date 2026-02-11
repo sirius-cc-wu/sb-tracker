@@ -3,7 +3,7 @@ Simple Beads (sb) - A minimal, standalone issue tracker for individuals.
 No git hooks, no complex dependencies, just one JSON file.
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __author__ = "Simple Beads Contributors"
 
 from .cli import main
