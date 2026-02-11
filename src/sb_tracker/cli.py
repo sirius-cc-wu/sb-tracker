@@ -459,9 +459,14 @@ def main():
         print("  show <id> [--json]        Show issue details")
         print("  done <id>                 Close issue")
         print("  rm <id>                   Delete issue")
+        print("  version                   Show version")
         return
 
     cmd = sys.argv[1]
+    if cmd in ["version", "--version", "-v"]:
+        import sb_tracker
+        print(f"sb-tracker {sb_tracker.__version__}")
+        return
     if cmd == "init":
         init()
     elif cmd == "add":
