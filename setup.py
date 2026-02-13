@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="sb-tracker",
-    version="0.1.5",
+    version="0.1.6",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     python_requires=">=3.7",
