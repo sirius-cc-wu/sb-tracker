@@ -7,6 +7,7 @@ No git hooks, no complex dependencies, just one JSON file.
 import json
 import os
 import sys
+import hashlib
 from datetime import datetime
 
 def find_db_path():
@@ -24,16 +25,113 @@ def find_db_path():
 
 DB_FILE = find_db_path()
 
+
+def _encode_base36(data, length):
+    alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+    num = int.from_bytes(data, "big")
+    if num == 0:
+        encoded = "0"
+    else:
+        chars = []
+        while num > 0:
+            num, rem = divmod(num, 36)
+            chars.append(alphabet[rem])
+        encoded = "".join(reversed(chars))
+    if len(encoded) < length:
+        encoded = ("0" * (length - len(encoded))) + encoded
+    if len(encoded) > length:
+        encoded = encoded[-length:]
+    return encoded
+
+
+def _is_hierarchical_id(issue_id):
+    if "." not in issue_id:
+        return False
+    parent, suffix = issue_id.rsplit(".", 1)
+    return bool(parent) and suffix.isdigit()
+
+
+def _bootstrap_child_counters(db):
+    meta = db["meta"]
+    counters = meta["child_counters"]
+    if meta.get("child_counters_bootstrapped"):
+        return
+    for issue in db["issues"]:
+        issue_id = issue.get("id", "")
+        if not _is_hierarchical_id(issue_id):
+            continue
+        parent_id, suffix = issue_id.rsplit(".", 1)
+        try:
+            child_num = int(suffix)
+        except ValueError:
+            continue
+        if child_num > counters.get(parent_id, 0):
+            counters[parent_id] = child_num
+    meta["child_counters_bootstrapped"] = True
+
+
+def _ensure_db_shape(db):
+    if not isinstance(db, dict):
+        db = {}
+    if "issues" not in db or not isinstance(db["issues"], list):
+        db["issues"] = []
+    if "meta" not in db or not isinstance(db["meta"], dict):
+        db["meta"] = {}
+    meta = db["meta"]
+    if "id_mode" not in meta or not isinstance(meta["id_mode"], str):
+        meta["id_mode"] = "hash"
+    if "child_counters" not in meta or not isinstance(meta["child_counters"], dict):
+        meta["child_counters"] = {}
+    _bootstrap_child_counters(db)
+    return db
+
+
+def _next_sequential_id(issues):
+    max_id = 0
+    for issue in issues:
+        issue_id = issue.get("id", "")
+        if "." in issue_id:
+            continue
+        try:
+            if "-" in issue_id:
+                val = int(issue_id.split("-")[1])
+                if val > max_id:
+                    max_id = val
+        except (IndexError, ValueError):
+            continue
+    return f"sb-{max_id + 1}"
+
+
+def _next_hash_id(issues, title, description, created_at):
+    existing_ids = {issue.get("id", "") for issue in issues}
+    for length in range(6, 9):
+        for nonce in range(100):
+            content = f"{title}|{description}|{created_at}|{nonce}"
+            digest = hashlib.sha256(content.encode("utf-8")).digest()[:5]
+            short = _encode_base36(digest, length)
+            candidate = f"sb-{short}"
+            if candidate not in existing_ids:
+                return candidate
+    raise RuntimeError("failed to generate unique hash ID")
+
+
+def _next_top_level_id(db, title, description, created_at):
+    mode = db.get("meta", {}).get("id_mode", "hash")
+    if mode == "sequential":
+        return _next_sequential_id(db["issues"])
+    return _next_hash_id(db["issues"], title, description, created_at)
+
 def load_db():
     if not os.path.exists(DB_FILE):
-        return {"issues": []}
+        return _ensure_db_shape({"issues": []})
     try:
         with open(DB_FILE, "r") as f:
-            return json.load(f)
+            return _ensure_db_shape(json.load(f))
     except (json.JSONDecodeError, IOError):
-        return {"issues": []}
+        return _ensure_db_shape({"issues": []})
 
 def save_db(db):
+    db = _ensure_db_shape(db)
     with open(DB_FILE, "w") as f:
         json.dump(db, f, indent=2)
 
@@ -41,7 +139,16 @@ def init():
     if os.path.exists(DB_FILE):
         print(f"Error: {DB_FILE} already exists.")
         return
-    save_db({"issues": []})
+    save_db(
+        {
+            "issues": [],
+            "meta": {
+                "id_mode": "hash",
+                "child_counters": {},
+                "child_counters_bootstrapped": True,
+            },
+        }
+    )
     print(f"Initialized Simple Beads in {DB_FILE}")
     
     # Create or append to AGENTS.md
@@ -220,35 +327,24 @@ def log_event(issue, event_type, details=None):
 
 def add(title, description="", priority=2, depends_on=None, parent_id=None):
     db = load_db()
+    created_at = datetime.now().isoformat()
     
     if parent_id:
         parent = next((i for i in db["issues"] if i["id"] == parent_id), None)
         if not parent:
             print(f"Error: Parent issue {parent_id} not found.")
             return
-        
-        prefix = parent_id + "."
-        children = [i for i in db["issues"] if i["id"].startswith(prefix)]
-        max_sub = 0
-        for child in children:
-            sub_part = child["id"][len(prefix):]
-            if "." not in sub_part:
-                try:
-                    val = int(sub_part)
-                    if val > max_sub:
-                        max_sub = val
-                except ValueError: continue
-        new_id = f"{prefix}{max_sub + 1}"
+
+        counters = db["meta"]["child_counters"]
+        next_sub = int(counters.get(parent_id, 0)) + 1
+        existing_ids = {issue.get("id", "") for issue in db["issues"]}
+        new_id = f"{parent_id}.{next_sub}"
+        while new_id in existing_ids:
+            next_sub += 1
+            new_id = f"{parent_id}.{next_sub}"
+        counters[parent_id] = next_sub
     else:
-        max_id = 0
-        for issue in db["issues"]:
-            if "." not in issue["id"]:
-                try:
-                    if "-" in issue["id"]:
-                        val = int(issue["id"].split("-")[1])
-                        if val > max_id: max_id = val
-                except (IndexError, ValueError): continue
-        new_id = f"sb-{max_id + 1}"
+        new_id = _next_top_level_id(db, title, description, created_at)
 
     issue = {
         "id": new_id,
@@ -258,7 +354,7 @@ def add(title, description="", priority=2, depends_on=None, parent_id=None):
         "status": "open",
         "depends_on": depends_on or [],
         "events": [],
-        "created_at": datetime.now().isoformat()
+        "created_at": created_at
     }
     if parent_id:
         issue["parent"] = parent_id

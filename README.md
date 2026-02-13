@@ -135,9 +135,10 @@ sb done sb-1
 
 ### Task ID Format
 
-- **Root tasks**: `sb-1`, `sb-2`, etc.
-- **Sub-tasks**: `sb-1.1`, `sb-1.2`, `sb-1.1.1`, etc.
+- **Root tasks**: `sb-<hash>` (for example: `sb-a3f8e9`)
+- **Sub-tasks**: `<parent>.<n>` (for example: `sb-a3f8e9.1`, `sb-a3f8e9.2`)
 - **Parent relationship**: Use parent ID in `add` or `update`
+- **No ID reuse**: IDs are not re-used after task deletion
 
 ## Priority Levels
 
@@ -173,6 +174,19 @@ Tasks are stored in `.sb.json` (found in git repository root) with this schema:
     }
   ],
   "compaction_log": []
+}
+```
+
+The file may also include metadata used for ID generation and child counters:
+
+```json
+{
+  "meta": {
+    "id_mode": "hash",
+    "child_counters": {
+      "sb-a3f8e9": 3
+    }
+  }
 }
 ```
 
