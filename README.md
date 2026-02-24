@@ -81,8 +81,6 @@ sb done sb-1
 ## Commands
 
 ### Global Tracker Flags
-
-- **`--local`**: Use repo-local `.sb.json` instead of global
 - **`--repo [path]`**: Filter to a repo (defaults to current repo if no path)
 - **`--global`**: Show only tasks not tied to any repo
 
@@ -308,13 +306,12 @@ If you installed with `pip`, ensure the install location is on your `PATH`.
 
 ### `.sb.json` not found
 
-By default, the tracker uses `~/.sb.json`. You can override the location with `SB_DB_PATH` or use repo-local mode with `--local`.
+By default, the tracker uses `~/.sb.json`. You can override the location with `SB_DB_PATH`.
 
 To initialize:
 ```bash
 cd /your/project
 sb init
-sb init --local
 ```
 
 ### Task not found error
