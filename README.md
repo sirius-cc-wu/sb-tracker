@@ -56,7 +56,7 @@ For AI agents that support Gemini CLI skills, you can install the `sb-tracker` s
 From the root of this repository, run the following command:
 
 ```bash
-npx @google/gemini-cli-skills install $(pwd)/skills/sb-tracker
+npx skills add https://github.com/sirius-cc-wu/sb-tracker/tree/main/skills/sb-tracker
 ```
 
 This command installs the skill from the `skills/sb-tracker` directory into your Gemini CLI configuration.
