@@ -103,8 +103,91 @@ def _ensure_db_shape(db):
         meta["id_mode"] = "hash"
     if "child_counters" not in meta or not isinstance(meta["child_counters"], dict):
         meta["child_counters"] = {}
+    if "kanban" not in meta or not isinstance(meta["kanban"], dict):
+        meta["kanban"] = {
+            "columns": ["Backlog", "Ready", "Doing", "Review", "Done"],
+            "backlog": "Backlog",
+            "done": "Done",
+        }
+    else:
+        if "columns" not in meta["kanban"] or not isinstance(meta["kanban"]["columns"], list):
+            meta["kanban"]["columns"] = ["Backlog", "Ready", "Doing", "Review", "Done"]
+        if "backlog" not in meta["kanban"] or not isinstance(meta["kanban"]["backlog"], str):
+            meta["kanban"]["backlog"] = "Backlog"
+        if "done" not in meta["kanban"] or not isinstance(meta["kanban"]["done"], str):
+            meta["kanban"]["done"] = "Done"
+    if "kanban_by_repo" not in meta or not isinstance(meta["kanban_by_repo"], dict):
+        meta["kanban_by_repo"] = {}
     _bootstrap_child_counters(db)
     return db
+
+
+def _normalize_kanban_config(config, fallback):
+    normalized = {}
+    normalized["columns"] = config.get("columns") if isinstance(config, dict) else None
+    if not isinstance(normalized["columns"], list):
+        normalized["columns"] = fallback["columns"]
+    normalized["columns"] = list(normalized["columns"])
+    normalized["backlog"] = config.get("backlog") if isinstance(config, dict) else None
+    if not isinstance(normalized["backlog"], str):
+        normalized["backlog"] = fallback["backlog"]
+    normalized["done"] = config.get("done") if isinstance(config, dict) else None
+    if not isinstance(normalized["done"], str):
+        normalized["done"] = fallback["done"]
+    if normalized["backlog"] not in normalized["columns"]:
+        normalized["columns"].append(normalized["backlog"])
+    if normalized["done"] not in normalized["columns"]:
+        normalized["columns"].append(normalized["done"])
+    return normalized
+
+
+def get_kanban_config(db, repo_root=None):
+    meta = db.get("meta", {})
+    base = meta.get("kanban", {"columns": ["Backlog", "Ready", "Doing", "Review", "Done"], "backlog": "Backlog", "done": "Done"})
+    if repo_root:
+        repo_config = meta.get("kanban_by_repo", {}).get(repo_root)
+        if isinstance(repo_config, dict):
+            return _normalize_kanban_config(repo_config, base)
+    return _normalize_kanban_config(base, base)
+
+
+def normalize_status(status, config):
+    if status == "open":
+        return config["backlog"]
+    if status == "closed":
+        return config["done"]
+    if status in config["columns"]:
+        return status
+    return None
+
+
+def is_done_status(status, config):
+    normalized = normalize_status(status, config)
+    return normalized == config["done"]
+
+
+def is_issue_done(issue, db):
+    config = get_kanban_config(db, issue.get("repo"))
+    return is_done_status(issue.get("status"), config)
+
+
+def _apply_status_change(issue, new_status, config):
+    normalized = normalize_status(new_status, config)
+    if normalized is None:
+        valid = ", ".join(config["columns"])
+        print(f"Error: Invalid status '{new_status}'. Valid statuses: {valid}")
+        return False
+    old_status = issue.get("status")
+    if old_status == normalized:
+        return False
+    issue["status"] = normalized
+    log_event(issue, "status_changed", {"old": old_status, "new": normalized})
+    if is_done_status(normalized, config):
+        issue["closed_at"] = datetime.now().isoformat()
+    else:
+        if "closed_at" in issue:
+            del issue["closed_at"]
+    return True
 
 
 def _next_sequential_id(issues):
@@ -192,7 +275,7 @@ Install `sb` and ensure it is on your `PATH` before using these commands:
 
 **Agents**: Please use the `sb` command to track work:
 - `sb add "Task title" [priority] [description]` - Create a task
-- `sb list` - View open tasks
+- `sb list` - View non-done tasks
 - `sb ready` - See tasks ready to work on
 - `sb done <id>` - Mark a task as complete
 - `sb promote <id>` - Optional: generate a Markdown summary of task progress
@@ -222,7 +305,7 @@ Run `sb --help` for more commands.
 1. **File remaining work** - Create issues for any follow-up tasks
 2. **Verify** - Run project tests or take a screenshot to confirm the work is complete
 3. **Update task status** - Mark completed work as done with `sb done <id>`
-4. **Clean up** - Run `sb compact` if you want to remove closed tasks
+4. **Clean up** - Run `sb compact` if you want to remove done tasks
 5. **Commit local changes** - Commit code changes. If a `commit` skill is available in the agent environment, use it. Otherwise run:
    ```bash
    git add -A
@@ -300,6 +383,7 @@ def update_issue(
     title=None,
     description=None,
     priority=None,
+    status=None,
     parent_id=None,
     repo=None,
     repo_commit=None,
@@ -313,6 +397,7 @@ def update_issue(
         return
 
     changes = {}
+    status_changed = False
     if title:
         changes["title"] = (issue["title"], title)
         issue["title"] = title
@@ -322,6 +407,11 @@ def update_issue(
     if priority is not None:
         changes["priority"] = (issue.get("priority", 2), priority)
         issue["priority"] = priority
+    if status is not None:
+        config = get_kanban_config(db, issue.get("repo"))
+        status_changed = _apply_status_change(issue, status, config)
+        if status_changed is False and normalize_status(status, config) is None:
+            return
     if parent_id is not None:
         # Hierarchy change
         old_parent = issue.get("parent")
@@ -350,6 +440,7 @@ def update_issue(
 
     if changes:
         log_event(issue, "updated", {"changes": changes})
+    if changes or status_changed:
         save_db(db, db_path=db_path)
         print(f"Updated {issue_id}")
     else:
@@ -366,14 +457,16 @@ def promote_issue(issue_id, db_path=None):
     children = [i for i in db["issues"] if i.get("parent") == issue_id]
 
     print(f"### [{issue['id']}] {issue['title']}")
-    print(f"**Status:** {issue['status']} | **Priority:** P{issue.get('priority', 2)}")
+    issue_config = get_kanban_config(db, issue.get("repo"))
+    issue_status = normalize_status(issue["status"], issue_config) or "Unmapped"
+    print(f"**Status:** {issue_status} | **Priority:** P{issue.get('priority', 2)}")
     if issue.get("description"):
         print(f"\n{issue['description']}")
 
     if children:
         print("\n#### Sub-tasks")
         for child in children:
-            check = "x" if child["status"] == "closed" else " "
+            check = "x" if is_issue_done(child, db) else " "
             print(f"- [{check}] {child['id']}: {child['title']}")
 
     if issue.get("events"):
@@ -430,12 +523,13 @@ def add(
     else:
         new_id = _next_top_level_id(db, title, description, created_at)
 
+    config = get_kanban_config(db, repo)
     issue = {
         "id": new_id,
         "title": title,
         "description": description,
         "priority": priority,
-        "status": "open",
+        "status": config["backlog"],
         "depends_on": depends_on or [],
         "events": [],
         "created_at": created_at,
@@ -474,14 +568,14 @@ def add_dependency(child_id, parent_id, db_path=None):
         print(f"Already linked.")
 
 
-def is_ready(issue, all_issues):
-    if issue["status"] != "open":
+def is_ready(issue, all_issues, db):
+    if is_issue_done(issue, db):
         return False
 
-    # Check if all dependencies are closed
+    # Check if all dependencies are done
     for dep_id in issue.get("depends_on", []):
         dep = next((i for i in all_issues if i["id"] == dep_id), None)
-        if dep and dep["status"] != "closed":
+        if dep and not is_issue_done(dep, db):
             return False
     return True
 
@@ -498,9 +592,9 @@ def list_issues(
     all_issues = db["issues"]
 
     if ready_only:
-        issues = [i for i in all_issues if is_ready(i, all_issues)]
+        issues = [i for i in all_issues if is_ready(i, all_issues, db)]
     elif not show_all:
-        issues = [i for i in all_issues if i["status"] == "open"]
+        issues = [i for i in all_issues if not is_issue_done(i, db)]
     else:
         issues = all_issues
 
@@ -531,7 +625,8 @@ def list_issues(
     print(f"{'ID':<12} {'P':<2} {'Status':<12} {'Deps':<10} {'Title'}")
     print("-" * 80)
     for i in issues:
-        status = i["status"]
+        config = get_kanban_config(db, i.get("repo"))
+        status = normalize_status(i["status"], config) or "Unmapped"
         deps = ",".join(i.get("depends_on", []))
         if len(deps) > 10:
             deps = deps[:7] + "..."
@@ -542,14 +637,70 @@ def list_issues(
         )
 
 
+def board_view(as_json=False, repo_filter=None, global_only=False, db_path=None):
+    db = load_db(db_path=db_path)
+    issues = db["issues"]
+
+    if global_only:
+        issues = [i for i in issues if i.get("repo") is None]
+    elif repo_filter is not None:
+        issues = [i for i in issues if i.get("repo") == repo_filter]
+
+    config = get_kanban_config(db, repo_filter)
+    columns = list(config["columns"])
+    board = {col: [] for col in columns}
+    unmapped = []
+
+    for issue in issues:
+        issue_config = get_kanban_config(db, issue.get("repo"))
+        status = normalize_status(issue["status"], issue_config)
+        if status in board:
+            board[status].append(issue)
+        else:
+            unmapped.append(issue)
+
+    for col in board:
+        board[col].sort(key=lambda x: (x["id"], x.get("priority", 2)))
+    unmapped.sort(key=lambda x: (x["id"], x.get("priority", 2)))
+
+    if as_json:
+        output = {"columns": []}
+        for col in columns:
+            output["columns"].append({"name": col, "issues": board[col]})
+        if unmapped:
+            output["columns"].append({"name": "Unmapped", "issues": unmapped})
+        print(json.dumps(output, indent=2))
+        return
+
+    if not issues:
+        print("No issues found matching criteria.")
+        return
+
+    for col in columns:
+        print(f"{col}")
+        print("-" * len(col))
+        if not board[col]:
+            print("  (empty)")
+        else:
+            for i in board[col]:
+                print(f"  {i['id']}: {i['title']}")
+        print("")
+
+    if unmapped:
+        print("Unmapped")
+        print("--------")
+        for i in unmapped:
+            print(f"  {i['id']}: {i['title']} (status: {i['status']})")
+
+
 def show_stats(db_path=None):
     db = load_db(db_path=db_path)
     issues = db["issues"]
 
     total = len(issues)
-    open_count = len([i for i in issues if i["status"] == "open"])
-    closed_count = len([i for i in issues if i["status"] == "closed"])
-    ready_count = len([i for i in issues if is_ready(i, issues)])
+    open_count = len([i for i in issues if not is_issue_done(i, db)])
+    closed_count = len([i for i in issues if is_issue_done(i, db)])
+    ready_count = len([i for i in issues if is_ready(i, issues, db)])
 
     p_counts = {}
     for i in issues:
@@ -562,7 +713,7 @@ def show_stats(db_path=None):
     print(f"Total Issues:   {total}")
     print(f"Open:           {open_count}")
     print(f"Ready:          {ready_count}")
-    print(f"Closed:         {closed_count}")
+    print(f"Done:           {closed_count}")
     print("----------------------------------------")
     print("Priority Breakdown:")
     for p in sorted(p_counts.keys()):
@@ -576,32 +727,30 @@ def show_stats(db_path=None):
 
 def compact(db_path=None):
     db = load_db(db_path=db_path)
-    closed_issues = [i for i in db["issues"] if i["status"] == "closed"]
+    closed_issues = [i for i in db["issues"] if is_issue_done(i, db)]
 
     if not closed_issues:
-        print("No closed issues to compact.")
+        print("No done issues to compact.")
         return
 
-    # Remove closed issues
-    db["issues"] = [i for i in db["issues"] if i["status"] != "closed"]
+    # Remove done issues
+    db["issues"] = [i for i in db["issues"] if not is_issue_done(i, db)]
 
     save_db(db, db_path=db_path)
-    print(f"Successfully removed {len(closed_issues)} closed issues.")
+    print(f"Successfully removed {len(closed_issues)} done issues.")
 
 
-def update_status(issue_id, status, db_path=None):
+def set_status(issue_id, status, db_path=None):
     db = load_db(db_path=db_path)
     for i in db["issues"]:
         if i["id"] == issue_id:
-            old_status = i["status"]
-            if old_status == status:
+            config = get_kanban_config(db, i.get("repo"))
+            target_status = status if status is not None else config["done"]
+            changed = _apply_status_change(i, target_status, config)
+            if not changed:
                 return
-            i["status"] = status
-            log_event(i, "status_changed", {"old": old_status, "new": status})
-            if status == "closed":
-                i["closed_at"] = datetime.now().isoformat()
             save_db(db, db_path=db_path)
-            print(f"Updated {issue_id} status to {status}")
+            print(f"Updated {issue_id} status to {i['status']}")
             return
     print(f"Error: Issue {issue_id} not found.")
 
@@ -635,7 +784,9 @@ def show_issue(
                 print(f"ID:          {i['id']}")
                 print(f"Title:       {i['title']}")
                 print(f"Priority:    P{i.get('priority', 2)}")
-                print(f"Status:      {i['status']}")
+                config = get_kanban_config(db, i.get("repo"))
+                status = normalize_status(i["status"], config) or "Unmapped"
+                print(f"Status:      {status}")
                 print(f"Created:     {i['created_at']}")
                 print(f"Depends On:  {', '.join(i.get('depends_on', [])) or 'None'}")
 
@@ -676,10 +827,12 @@ def print_help():
     print("  list [--all] [--json]     List issues")
     print("  ready [--json]            List issues with no open blockers")
     print("  search <keyword> [--json] Search titles and descriptions")
+    print("  board [--json]            Show Kanban board")
     print("  stats                     Show task statistics")
-    print("  compact                   Remove closed issues")
+    print("  compact                   Remove done issues")
     print("  dep <child> <parent>      Add dependency")
-    print("  update <id> [field=val]   Update title, desc, p, parent")
+    print("  update <id> [field=val]   Update title, desc, p, status, parent")
+    print("  status <id> <state>       Move issue to a Kanban state")
     print("  promote <id>              Export task as Markdown")
     print("  show <id> [--json]        Show issue details")
     print("  done <id>                 Close issue")
@@ -824,10 +977,20 @@ def main():
                 global_only=opts["global_only"],
                 db_path=resolve_db_path(),
             )
+    elif cmd == "board":
+        args, opts = parse_common_flags(sys.argv[2:])
+        as_json = "--json" in args
+        repo_filter = resolve_repo_filter(opts)
+        board_view(
+            as_json=as_json,
+            repo_filter=repo_filter,
+            global_only=opts["global_only"],
+            db_path=resolve_db_path(),
+        )
     elif cmd == "update":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
-            print("Usage: sb update <id> [title=...] [desc=...] [p=...] [parent=...]")
+            print("Usage: sb update <id> [title=...] [desc=...] [p=...] [status=...] [parent=...]")
         else:
             issue_id = args[0]
             kwargs = {}
@@ -840,6 +1003,8 @@ def main():
                         kwargs["title"] = v
                     elif k == "desc":
                         kwargs["description"] = v
+                    elif k == "status":
+                        kwargs["status"] = v
                     elif k == "parent":
                         kwargs["parent_id"] = v
             repo = None
@@ -858,6 +1023,12 @@ def main():
                 db_path=resolve_db_path(),
                 **kwargs,
             )
+    elif cmd == "status":
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 2:
+            print("Usage: sb status <id> <state>")
+        else:
+            set_status(args[0], args[1], db_path=resolve_db_path())
     elif cmd == "promote":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
@@ -895,7 +1066,7 @@ def main():
         if len(args) < 1:
             print("Usage: sb done <id>")
         else:
-            update_status(args[0], "closed", db_path=resolve_db_path())
+            set_status(args[0], None, db_path=resolve_db_path())
     elif cmd == "rm":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:

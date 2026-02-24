@@ -11,11 +11,12 @@ A lightweight, standalone task tracker that stores state in a JSON file. Perfect
 - **Commit Snapshot**: Tasks capture the current repo commit on add/update
 - **Hierarchical Tasks**: Support for sub-tasks with parent-child relationships
 - **Priority Levels**: Tasks support P0-P3 priority levels
-- **Task Status Tracking**: Open/closed status with timestamps
+- **Kanban Workflow**: Configurable states and a board view
+- **Task Status Tracking**: Workflow status with timestamps
 - **Dependencies**: Link tasks with blocking dependencies
 - **Audit Log**: Track all changes to each task with timestamps
 - **JSON Export**: Machine-readable output for integration
-- **Compaction**: Archive closed tasks to keep context efficient
+- **Compaction**: Archive done tasks to keep context efficient
 
 ## Installation
 
@@ -65,7 +66,7 @@ sb add "High priority task" 0 "This is urgent"
 List tasks:
 
 ```bash
-sb list              # Show open tasks
+sb list              # Show non-done tasks
 sb list --all        # Show all tasks
 sb list --json       # Machine-readable output
 sb list --repo       # Show tasks for current repo
@@ -94,14 +95,16 @@ sb done sb-1
 - **`add <title> [priority] [description] [parent_id]`**
   - Example: `sb add "Setup database" 1 "Configure PostgreSQL" sb-1`
 - **`update <id> [field=value ...]`**
-  - Fields: `title`, `desc`, `p` (priority), `parent`
+  - Fields: `title`, `desc`, `p` (priority), `status`, `parent`
   - Example: `sb update sb-1 p=0 desc="New description"`
+- **`status <id> <state>`**: Move a task to a Kanban state
+  - Example: `sb status sb-1 Doing`
 - **`dep <child_id> <parent_id>`**: Add a blocking dependency
   - Example: `sb dep sb-2 sb-1` (sb-2 blocked by sb-1)
 
 ### List and Search
 
-- **`list [--all] [--json]`**: Show open (or all) tasks with hierarchy
+- **`list [--all] [--json]`**: Show non-done (or all) tasks with hierarchy
 - **`ready [--json]`**: Show tasks with no open blockers
 - **`search <keyword> [--json]`**: Search titles and descriptions
   - Use `--repo` to filter to current repo, or `--global` to show only non-repo tasks
@@ -109,10 +112,11 @@ sb done sb-1
 ### Reporting and Maintenance
 
 - **`show <id> [--json]`**: Display task details with audit log
+- **`board [--json]`**: Show Kanban board grouped by status
 - **`promote <id>`**: Optional Markdown summary of task and sub-tasks
 - **`stats`**: Overview of progress and priority breakdown
-- **`compact`**: Archive closed tasks to save space
-- **`done <id>`**: Mark task as closed
+- **`compact`**: Archive done tasks to save space
+- **`done <id>`**: Mark task as done
 - **`rm <id>`**: Permanently delete task
 
 ## Workflow
@@ -173,7 +177,7 @@ Tasks are stored in a JSON database (global by default at `~/.sb.json`) with thi
       "title": "Task title",
       "description": "Optional description",
       "priority": 1,
-      "status": "open",
+      "status": "Backlog",
       "depends_on": ["sb-2"],
       "parent": "sb-1",
       "repo": "/absolute/path/to/repo",
@@ -203,6 +207,12 @@ The file may also include metadata used for ID generation and child counters:
 {
   "meta": {
     "id_mode": "hash",
+    "kanban": {
+      "columns": ["Backlog", "Ready", "Doing", "Review", "Done"],
+      "backlog": "Backlog",
+      "done": "Done"
+    },
+    "kanban_by_repo": {},
     "child_counters": {
       "sb-a3f8e9": 3
     }
@@ -229,10 +239,10 @@ Created sb-1.3: Write tests (P2)
 
 $ sb list
 ID           P  Status       Deps       Title
-sb-1         2  open                    Build authentication system
-sb-1.1       1  open                      Design schema
-sb-1.2       1  open                      Implement login endpoint
-sb-1.3       2  open                      Write tests
+sb-1         2  Backlog                 Build authentication system
+sb-1.1       1  Backlog                   Design schema
+sb-1.2       1  Backlog                   Implement login endpoint
+sb-1.3       2  Backlog                   Write tests
 ```
 
 ### Blocking Dependencies
@@ -248,20 +258,20 @@ $ sb ready
 No issues found matching criteria.
 
 $ sb done sb-1.1
-Updated sb-1.1 status to closed
+Updated sb-1.1 status to Done
 
 $ sb done sb-1.2
-Updated sb-1.2 status to closed
+Updated sb-1.2 status to Done
 
 $ sb done sb-1.3
-Updated sb-1.3 status to closed
+Updated sb-1.3 status to Done
 
 $ sb done sb-1
-Updated sb-1 status to closed
+Updated sb-1 status to Done
 
 $ sb ready
 ID           P  Status       Deps       Title
-sb-2         1  open                    Deploy to production
+sb-2         1  Backlog                 Deploy to production
 ```
 
 ### Task Reporting
@@ -271,7 +281,7 @@ Optional when you want a Markdown report for sharing:
 ```bash
 $ sb promote sb-1
 ### [sb-1] Build authentication system
-**Status:** closed | **Priority:** P2
+**Status:** Done | **Priority:** P2
 
 #### Sub-tasks
 - [x] sb-1.1: Design schema
@@ -280,7 +290,7 @@ $ sb promote sb-1
 
 #### Activity Log
 - 2026-02-04: Created
-- 2026-02-04: Status: open -> closed
+- 2026-02-04: Status: Backlog -> Done
 ```
 
 ## License
@@ -328,4 +338,4 @@ Archive old tasks to reduce token context:
 sb compact
 ```
 
-This moves all closed tasks to a `compaction_log` and keeps them accessible via `list --all` or `list --json`.
+This moves all done tasks to a `compaction_log` and keeps them accessible via `list --all` or `list --json`.
