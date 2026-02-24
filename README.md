@@ -1,11 +1,14 @@
 # SB Tracker - Simple Beads
 
-A lightweight, standalone task tracker that stores state in a local `.sb.json` file. Perfect for individuals and agents to maintain context and track long-running or multi-step tasks without external dependencies.
+A lightweight, standalone task tracker that stores state in a JSON file. Perfect for individuals and agents to maintain context and track long-running or multi-step tasks without external dependencies.
 
 ## Features
 
 - **Zero Dependencies**: Pure Python, uses only stdlib (json, os, sys, datetime)
-- **Standalone**: One JSON file stores all state locally
+- **Standalone**: One JSON file stores all state (global by default)
+- **Global Tracker**: Defaults to `~/.sb.json` with optional `SB_DB_PATH`
+- **Repo Awareness**: Tasks can be scoped to a repo and filtered by repo
+- **Commit Snapshot**: Tasks capture the current repo commit on add/update
 - **Hierarchical Tasks**: Support for sub-tasks with parent-child relationships
 - **Priority Levels**: Tasks support P0-P3 priority levels
 - **Task Status Tracking**: Open/closed status with timestamps
@@ -46,7 +49,7 @@ sb --help
 
 ## Quick Start
 
-Initialize a new task tracker:
+Initialize a new task tracker (global by default):
 
 ```bash
 sb init
@@ -65,6 +68,8 @@ List tasks:
 sb list              # Show open tasks
 sb list --all        # Show all tasks
 sb list --json       # Machine-readable output
+sb list --repo       # Show tasks for current repo
+sb list --global     # Show tasks not tied to any repo
 ```
 
 Complete a task:
@@ -75,9 +80,19 @@ sb done sb-1
 
 ## Commands
 
+### Global Tracker Flags
+
+- **`--local`**: Use repo-local `.sb.json` instead of global
+- **`--repo [path]`**: Filter to a repo (defaults to current repo if no path)
+- **`--global`**: Show only tasks not tied to any repo
+
+### Environment
+
+- **`SB_DB_PATH`**: Override the default DB path (otherwise `~/.sb.json`)
+
 ### Create and Modify
 
-- **`init`**: Initialize `.sb.json` in the current git repository root
+- **`init`**: Initialize the database (defaults to `~/.sb.json`)
 - **`add <title> [priority] [description] [parent_id]`**
   - Example: `sb add "Setup database" 1 "Configure PostgreSQL" sb-1`
 - **`update <id> [field=value ...]`**
@@ -91,6 +106,7 @@ sb done sb-1
 - **`list [--all] [--json]`**: Show open (or all) tasks with hierarchy
 - **`ready [--json]`**: Show tasks with no open blockers
 - **`search <keyword> [--json]`**: Search titles and descriptions
+  - Use `--repo` to filter to current repo, or `--global` to show only non-repo tasks
 
 ### Reporting and Maintenance
 
@@ -149,7 +165,7 @@ sb done sb-1
 
 ## Database Format
 
-Tasks are stored in `.sb.json` (found in git repository root) with this schema:
+Tasks are stored in a JSON database (global by default at `~/.sb.json`) with this schema:
 
 ```json
 {
@@ -162,6 +178,8 @@ Tasks are stored in `.sb.json` (found in git repository root) with this schema:
       "status": "open",
       "depends_on": ["sb-2"],
       "parent": "sb-1",
+      "repo": "/absolute/path/to/repo",
+      "repo_commit": "abc123...",
       "created_at": "2026-02-04T18:40:10.692Z",
       "closed_at": "2026-02-04T19:40:10.692Z",
       "events": [
@@ -176,6 +194,10 @@ Tasks are stored in `.sb.json` (found in git repository root) with this schema:
   "compaction_log": []
 }
 ```
+
+### Repo Awareness and Worktrees
+
+When inside a git repo, tasks store a canonical repo root so multiple worktrees/branches share the same task set. Each add/update captures the current commit hash in `repo_commit` to provide context for the repo state.
 
 The file may also include metadata used for ID generation and child counters:
 
@@ -286,12 +308,13 @@ If you installed with `pip`, ensure the install location is on your `PATH`.
 
 ### `.sb.json` not found
 
-The tracker looks for `.sb.json` starting from the current directory and walking up the directory tree until it finds a `.git` directory (to keep data project-local). If not found, it creates `.sb.json` in the current working directory.
+By default, the tracker uses `~/.sb.json`. You can override the location with `SB_DB_PATH` or use repo-local mode with `--local`.
 
 To initialize:
 ```bash
 cd /your/project
 sb init
+sb init --local
 ```
 
 ### Task not found error

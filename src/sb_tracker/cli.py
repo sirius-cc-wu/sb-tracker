@@ -8,11 +8,12 @@ import json
 import os
 import sys
 import hashlib
+import subprocess
 from datetime import datetime
 
-def find_db_path():
-    """Walk up the directory tree to find .sb.json."""
-    cwd = os.getcwd()
+def find_db_path(cwd=None):
+    """Walk up the directory tree to find .sb.json (local mode)."""
+    cwd = cwd or os.getcwd()
     while cwd != os.path.dirname(cwd):  # Stop at root
         potential_path = os.path.join(cwd, ".sb.json")
         if os.path.exists(potential_path):
@@ -23,7 +24,38 @@ def find_db_path():
         cwd = os.path.dirname(cwd)
     return os.path.join(os.getcwd(), ".sb.json")
 
-DB_FILE = find_db_path()
+def resolve_db_path(local=False, cwd=None):
+    if local:
+        return find_db_path(cwd=cwd)
+    env_path = os.environ.get("SB_DB_PATH")
+    if env_path:
+        return os.path.expanduser(env_path)
+    return os.path.expanduser("~/.sb.json")
+
+def _run_git(args, cwd=None):
+    try:
+        result = subprocess.run(
+            ["git"] + args,
+            cwd=cwd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    return result.stdout.strip()
+
+def get_repo_root(cwd=None):
+    cwd = cwd or os.getcwd()
+    common_dir = _run_git(["rev-parse", "--git-common-dir"], cwd=cwd)
+    if not common_dir:
+        return None
+    common_abs = os.path.abspath(os.path.join(cwd, common_dir))
+    return os.path.realpath(os.path.dirname(common_abs))
+
+def get_repo_commit(cwd=None):
+    return _run_git(["rev-parse", "HEAD"], cwd=cwd)
 
 
 def _encode_base36(data, length):
@@ -121,23 +153,26 @@ def _next_top_level_id(db, title, description, created_at):
         return _next_sequential_id(db["issues"])
     return _next_hash_id(db["issues"], title, description, created_at)
 
-def load_db():
-    if not os.path.exists(DB_FILE):
+def load_db(db_path=None):
+    db_path = db_path or resolve_db_path()
+    if not os.path.exists(db_path):
         return _ensure_db_shape({"issues": []})
     try:
-        with open(DB_FILE, "r") as f:
+        with open(db_path, "r") as f:
             return _ensure_db_shape(json.load(f))
     except (json.JSONDecodeError, IOError):
         return _ensure_db_shape({"issues": []})
 
-def save_db(db):
+def save_db(db, db_path=None):
+    db_path = db_path or resolve_db_path()
     db = _ensure_db_shape(db)
-    with open(DB_FILE, "w") as f:
+    with open(db_path, "w") as f:
         json.dump(db, f, indent=2)
 
-def init():
-    if os.path.exists(DB_FILE):
-        print(f"Error: {DB_FILE} already exists.")
+def init(local=False):
+    db_path = resolve_db_path(local=local)
+    if os.path.exists(db_path):
+        print(f"Error: {db_path} already exists.")
         return
     save_db(
         {
@@ -147,10 +182,15 @@ def init():
                 "child_counters": {},
                 "child_counters_bootstrapped": True,
             },
-        }
+        },
+        db_path=db_path,
     )
-    print(f"Initialized Simple Beads in {DB_FILE}")
+    print(f"Initialized Simple Beads in {db_path}")
     
+    # Create or append to AGENTS.md (local mode only)
+    if not local:
+        return
+
     # Create or append to AGENTS.md
     agents_md_content = """## Using SB Tracker
 
@@ -206,7 +246,7 @@ Run `sb --help` for more commands.
 - `sb promote` is optional and only needed when you want a Markdown report
 """
     
-    agents_md_path = os.path.join(os.path.dirname(DB_FILE), "AGENTS.md")
+    agents_md_path = os.path.join(os.path.dirname(db_path), "AGENTS.md")
     
     if os.path.exists(agents_md_path):
         # Check if "Using SB Tracker" section already exists
@@ -227,11 +267,15 @@ Run `sb --help` for more commands.
             f.write(agents_md_content)
         print(f"Created {agents_md_path} with SB Tracker instructions")
 
-def search_issues(keyword, as_json=False):
-    db = load_db()
+def search_issues(keyword, as_json=False, repo_filter=None, global_only=False, db_path=None):
+    db = load_db(db_path=db_path)
     keyword = keyword.lower()
     results = []
     for i in db["issues"]:
+        if global_only and i.get("repo") is not None:
+            continue
+        if repo_filter is not None and i.get("repo") != repo_filter:
+            continue
         if keyword in i["title"].lower() or keyword in i.get("description", "").lower():
             results.append(i)
     
@@ -249,8 +293,8 @@ def search_issues(keyword, as_json=False):
     for i in results:
         print(f"{i['id']:<12} {i['status']:<12} {i['title']}")
 
-def update_issue(issue_id, title=None, description=None, priority=None, parent_id=None):
-    db = load_db()
+def update_issue(issue_id, title=None, description=None, priority=None, parent_id=None, repo=None, repo_commit=None, repo_force=False, db_path=None):
+    db = load_db(db_path=db_path)
     issue = next((i for i in db["issues"] if i["id"] == issue_id), None)
     if not issue:
         print(f"Error: Issue {issue_id} not found.")
@@ -275,16 +319,31 @@ def update_issue(issue_id, title=None, description=None, priority=None, parent_i
         else:
             issue["parent"] = parent_id
             changes["parent"] = (old_parent, parent_id)
+    current_repo = issue.get("repo")
+    if repo is not None:
+        if current_repo is None and repo_force:
+            issue["repo"] = repo
+            current_repo = repo
+            changes["repo"] = (None, repo)
+        elif current_repo == repo:
+            pass
+    if repo_commit is not None:
+        if current_repo is None and repo_force:
+            issue["repo_commit"] = repo_commit
+            changes["repo_commit"] = "updated"
+        elif current_repo == repo:
+            issue["repo_commit"] = repo_commit
+            changes["repo_commit"] = "updated"
 
     if changes:
         log_event(issue, "updated", {"changes": changes})
-        save_db(db)
+        save_db(db, db_path=db_path)
         print(f"Updated {issue_id}")
     else:
         print("No changes specified.")
 
-def promote_issue(issue_id):
-    db = load_db()
+def promote_issue(issue_id, db_path=None):
+    db = load_db(db_path=db_path)
     issue = next((i for i in db["issues"] if i["id"] == issue_id), None)
     if not issue:
         print(f"Error: Issue {issue_id} not found.")
@@ -325,8 +384,8 @@ def log_event(issue, event_type, details=None):
         issue["events"] = []
     issue["events"].append(event)
 
-def add(title, description="", priority=2, depends_on=None, parent_id=None):
-    db = load_db()
+def add(title, description="", priority=2, depends_on=None, parent_id=None, repo=None, repo_commit=None, db_path=None):
+    db = load_db(db_path=db_path)
     created_at = datetime.now().isoformat()
     
     if parent_id:
@@ -358,14 +417,18 @@ def add(title, description="", priority=2, depends_on=None, parent_id=None):
     }
     if parent_id:
         issue["parent"] = parent_id
+    if repo is not None:
+        issue["repo"] = repo
+    if repo_commit is not None:
+        issue["repo_commit"] = repo_commit
         
     log_event(issue, "created", {"title": title})
     db["issues"].append(issue)
-    save_db(db)
+    save_db(db, db_path=db_path)
     print(f"Created {new_id}: {title} (P{priority})")
 
-def add_dependency(child_id, parent_id):
-    db = load_db()
+def add_dependency(child_id, parent_id, db_path=None):
+    db = load_db(db_path=db_path)
     child = next((i for i in db["issues"] if i["id"] == child_id), None)
     parent = next((i for i in db["issues"] if i["id"] == parent_id), None)
     
@@ -379,7 +442,7 @@ def add_dependency(child_id, parent_id):
     if parent_id not in child["depends_on"]:
         child["depends_on"].append(parent_id)
         log_event(child, "dep_added", {"parent": parent_id})
-        save_db(db)
+        save_db(db, db_path=db_path)
         print(f"Linked {child_id} -> depends on -> {parent_id}")
     else:
         print(f"Already linked.")
@@ -395,8 +458,8 @@ def is_ready(issue, all_issues):
             return False
     return True
 
-def list_issues(show_all=False, as_json=False, ready_only=False):
-    db = load_db()
+def list_issues(show_all=False, as_json=False, ready_only=False, repo_filter=None, global_only=False, db_path=None):
+    db = load_db(db_path=db_path)
     all_issues = db["issues"]
     
     if ready_only:
@@ -405,6 +468,11 @@ def list_issues(show_all=False, as_json=False, ready_only=False):
         issues = [i for i in all_issues if i["status"] == "open"]
     else:
         issues = all_issues
+
+    if global_only:
+        issues = [i for i in issues if i.get("repo") is None]
+    elif repo_filter is not None:
+        issues = [i for i in issues if i.get("repo") == repo_filter]
     
     # Sort by ID (to keep hierarchy together), then priority
     issues.sort(key=lambda x: (x["id"], x.get("priority", 2)))
@@ -435,8 +503,8 @@ def list_issues(show_all=False, as_json=False, ready_only=False):
         indent = "  " * i["id"].count(".")
         print(f"{i['id']:<12} {i.get('priority', 2):<2} {status:<12} {deps:<10} {indent}{i['title']}")
 
-def show_stats():
-    db = load_db()
+def show_stats(db_path=None):
+    db = load_db(db_path=db_path)
     issues = db["issues"]
     
     total = len(issues)
@@ -466,8 +534,8 @@ def show_stats():
         print(f"Archived via Compaction: {len(db['compaction_log'])} entries")
     print("════════════════════════════════════════")
 
-def compact():
-    db = load_db()
+def compact(db_path=None):
+    db = load_db(db_path=db_path)
     closed_issues = [i for i in db["issues"] if i["status"] == "closed"]
     
     if not closed_issues:
@@ -477,11 +545,11 @@ def compact():
     # Remove closed issues
     db["issues"] = [i for i in db["issues"] if i["status"] != "closed"]
     
-    save_db(db)
+    save_db(db, db_path=db_path)
     print(f"Successfully removed {len(closed_issues)} closed issues.")
 
-def update_status(issue_id, status):
-    db = load_db()
+def update_status(issue_id, status, db_path=None):
+    db = load_db(db_path=db_path)
     for i in db["issues"]:
         if i["id"] == issue_id:
             old_status = i["status"]
@@ -490,25 +558,31 @@ def update_status(issue_id, status):
             log_event(i, "status_changed", {"old": old_status, "new": status})
             if status == "closed":
                 i["closed_at"] = datetime.now().isoformat()
-            save_db(db)
+            save_db(db, db_path=db_path)
             print(f"Updated {issue_id} status to {status}")
             return
     print(f"Error: Issue {issue_id} not found.")
 
-def delete_issue(issue_id):
-    db = load_db()
+def delete_issue(issue_id, db_path=None):
+    db = load_db(db_path=db_path)
     original_count = len(db["issues"])
     db["issues"] = [i for i in db["issues"] if i["id"] != issue_id]
     if len(db["issues"]) < original_count:
-        save_db(db)
+        save_db(db, db_path=db_path)
         print(f"Deleted {issue_id}")
     else:
         print(f"Error: Issue {issue_id} not found.")
 
-def show_issue(issue_id, as_json=False):
-    db = load_db()
+def show_issue(issue_id, as_json=False, repo_filter=None, global_only=False, db_path=None):
+    db = load_db(db_path=db_path)
     for i in db["issues"]:
         if i["id"] == issue_id:
+            if global_only and i.get("repo") is not None:
+                print(f"Error: Issue {issue_id} not found.")
+                return
+            if repo_filter is not None and i.get("repo") != repo_filter:
+                print(f"Error: Issue {issue_id} not found.")
+                return
             if as_json:
                 print(json.dumps(i, indent=2))
             else:
@@ -524,6 +598,11 @@ def show_issue(issue_id, as_json=False):
                 
                 if i.get("description"):
                     print(f"\nDescription:\n{i['description']}")
+
+                if i.get("repo"):
+                    print(f"\nRepo:        {i['repo']}")
+                if i.get("repo_commit"):
+                    print(f"Repo Commit: {i['repo_commit']}")
                 
                 if i.get("events"):
                     print("\nAudit Log:")
@@ -541,7 +620,7 @@ def show_issue(issue_id, as_json=False):
 def print_help():
     print("Usage: sb <command> [args]")
     print("Commands:")
-    print("  init                      Initialize .sb.json")
+    print("  init                      Initialize database (global by default)")
     print("  add <title> [p] [desc] [parent]   Add issue")
     print("  list [--all] [--json]     List issues")
     print("  ready [--json]            List issues with no open blockers")
@@ -555,11 +634,59 @@ def print_help():
     print("  done <id>                 Close issue")
     print("  rm <id>                   Delete issue")
     print("  version                   Show version")
+    print("\nGlobal tracker flags:")
+    print("  --local                   Use repo-local .sb.json")
+    print("  --repo [path]             Filter by repo (default: current repo)")
+    print("  --global                  Filter only tasks with no repo")
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ["help", "--help", "-h"]:
         print_help()
         return
+
+    def parse_common_flags(args):
+        opts = {
+            "local": False,
+            "global_only": False,
+            "repo": None,
+            "repo_current": False,
+        }
+        cleaned = []
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg == "--local":
+                opts["local"] = True
+                i += 1
+                continue
+            if arg == "--global":
+                opts["global_only"] = True
+                i += 1
+                continue
+            if arg == "--repo":
+                if i + 1 < len(args) and not args[i + 1].startswith("-"):
+                    opts["repo"] = args[i + 1]
+                    i += 2
+                else:
+                    opts["repo_current"] = True
+                    i += 1
+                continue
+            cleaned.append(arg)
+            i += 1
+        return cleaned, opts
+
+    def resolve_repo_filter(opts, cwd=None, default_current=False):
+        if opts["global_only"]:
+            return None
+        if opts["repo_current"]:
+            return get_repo_root(cwd=cwd)
+        if opts["repo"]:
+            repo_path = os.path.abspath(os.path.expanduser(opts["repo"]))
+            repo_root = get_repo_root(cwd=repo_path)
+            return repo_root or os.path.realpath(repo_path)
+        if default_current:
+            return get_repo_root(cwd=cwd)
+        return None
 
     cmd = sys.argv[1]
     if cmd in ["version", "--version", "-v"]:
@@ -567,88 +694,138 @@ def main():
         print(f"sb-tracker {sb_tracker.__version__}")
         return
     if cmd == "init":
-        init()
+        args, opts = parse_common_flags(sys.argv[2:])
+        if args:
+            print("Usage: sb init [--local]")
+            return
+        init(local=opts["local"])
     elif cmd == "add":
-        if len(sys.argv) < 3:
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
             print("Usage: sb add <title> [priority] [description] [parent_id]")
         else:
-            title = sys.argv[2]
+            title = args[0]
             p = 2
             desc = ""
             parent = None
             
-            args = sys.argv[3:]
-            if args:
+            rest = args[1:]
+            if rest:
                 try:
-                    p = int(args[0])
-                    args = args[1:]
+                    p = int(rest[0])
+                    rest = rest[1:]
                 except ValueError: pass
             
-            if args:
-                desc = args[0]
-                args = args[1:]
+            if rest:
+                desc = rest[0]
+                rest = rest[1:]
             
-            if args:
-                parent = args[0]
-                
-            add(title, desc, p, parent_id=parent)
+            if rest:
+                parent = rest[0]
+
+            repo = None
+            repo_commit = None
+            if not opts["global_only"]:
+                repo = resolve_repo_filter(opts, default_current=True)
+                if repo:
+                    repo_commit = get_repo_commit(cwd=repo)
+
+            add(
+                title,
+                desc,
+                p,
+                parent_id=parent,
+                repo=repo,
+                repo_commit=repo_commit,
+                db_path=resolve_db_path(local=opts["local"]),
+            )
     elif cmd == "list":
-        show_all = "--all" in sys.argv
-        as_json = "--json" in sys.argv
-        list_issues(show_all, as_json)
+        args, opts = parse_common_flags(sys.argv[2:])
+        show_all = "--all" in args
+        as_json = "--json" in args
+        repo_filter = resolve_repo_filter(opts)
+        list_issues(show_all, as_json, repo_filter=repo_filter, global_only=opts["global_only"], db_path=resolve_db_path(local=opts["local"]))
     elif cmd == "ready":
-        as_json = "--json" in sys.argv
-        list_issues(as_json=as_json, ready_only=True)
+        args, opts = parse_common_flags(sys.argv[2:])
+        as_json = "--json" in args
+        repo_filter = resolve_repo_filter(opts)
+        list_issues(as_json=as_json, ready_only=True, repo_filter=repo_filter, global_only=opts["global_only"], db_path=resolve_db_path(local=opts["local"]))
     elif cmd == "search":
-        if len(sys.argv) < 3:
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
             print("Usage: sb search <keyword> [--json]")
         else:
-            as_json = "--json" in sys.argv
-            search_issues(sys.argv[2], as_json)
+            as_json = "--json" in args
+            repo_filter = resolve_repo_filter(opts)
+            search_issues(args[0], as_json, repo_filter=repo_filter, global_only=opts["global_only"], db_path=resolve_db_path(local=opts["local"]))
     elif cmd == "update":
-        if len(sys.argv) < 3:
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
             print("Usage: sb update <id> [title=...] [desc=...] [p=...] [parent=...]")
         else:
-            issue_id = sys.argv[2]
+            issue_id = args[0]
             kwargs = {}
-            for arg in sys.argv[3:]:
+            for arg in args[1:]:
                 if "=" in arg:
                     k, v = arg.split("=", 1)
                     if k == "p": kwargs["priority"] = int(v)
                     elif k == "title": kwargs["title"] = v
                     elif k == "desc": kwargs["description"] = v
                     elif k == "parent": kwargs["parent_id"] = v
-            update_issue(issue_id, **kwargs)
+            repo = None
+            repo_commit = None
+            repo_force = False
+            if not opts["global_only"]:
+                repo = resolve_repo_filter(opts, default_current=True)
+                repo_force = bool(opts["repo_current"] or opts["repo"])
+                if repo:
+                    repo_commit = get_repo_commit(cwd=repo)
+            update_issue(
+                issue_id,
+                repo=repo,
+                repo_commit=repo_commit,
+                repo_force=repo_force,
+                db_path=resolve_db_path(local=opts["local"]),
+                **kwargs,
+            )
     elif cmd == "promote":
-        if len(sys.argv) < 3:
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
             print("Usage: sb promote <id>")
         else:
-            promote_issue(sys.argv[2])
+            promote_issue(args[0], db_path=resolve_db_path(local=opts["local"]))
     elif cmd == "stats":
-        show_stats()
+        args, opts = parse_common_flags(sys.argv[2:])
+        show_stats(db_path=resolve_db_path(local=opts["local"]))
     elif cmd == "compact":
-        compact()
+        args, opts = parse_common_flags(sys.argv[2:])
+        compact(db_path=resolve_db_path(local=opts["local"]))
     elif cmd == "dep":
-        if len(sys.argv) < 4:
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 2:
             print("Usage: sb dep <child_id> <parent_id>")
         else:
-            add_dependency(sys.argv[2], sys.argv[3])
+            add_dependency(args[0], args[1], db_path=resolve_db_path(local=opts["local"]))
     elif cmd == "show":
-        if len(sys.argv) < 3:
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
             print("Usage: sb show <id> [--json]")
         else:
-            as_json = "--json" in sys.argv
-            show_issue(sys.argv[2], as_json)
+            as_json = "--json" in args
+            repo_filter = resolve_repo_filter(opts)
+            show_issue(args[0], as_json, repo_filter=repo_filter, global_only=opts["global_only"], db_path=resolve_db_path(local=opts["local"]))
     elif cmd == "done":
-        if len(sys.argv) < 3:
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
             print("Usage: sb done <id>")
         else:
-            update_status(sys.argv[2], "closed")
+            update_status(args[0], "closed", db_path=resolve_db_path(local=opts["local"]))
     elif cmd == "rm":
-        if len(sys.argv) < 3:
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
             print("Usage: sb rm <id>")
         else:
-            delete_issue(sys.argv[2])
+            delete_issue(args[0], db_path=resolve_db_path(local=opts["local"]))
     else:
         print(f"Unknown command: {cmd}")
 

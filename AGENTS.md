@@ -1,6 +1,6 @@
 # SB Tracker (Simple Beads)
 
-A lightweight, standalone task tracker that stores state in a local `.sb.json` file. It's ideal for individual agent sessions to maintain context and track long-running or multi-step tasks.
+A lightweight, standalone task tracker that stores state in a global JSON file by default. It's ideal for individual agent sessions to maintain context and track long-running or multi-step tasks across repositories.
 
 ## Installation
 
@@ -24,12 +24,14 @@ sb --help
 
 ## Quick Start
 
-- **Initialize**: Run `sb init` if `.sb.json` doesn't exist.
+- **Initialize**: Run `sb init` to create the global DB (defaults to `~/.sb.json`).
 - **Add Task**: `sb add "Task Title" [priority] [desc] [parent_id]`
 - **Hierarchy**: Use `parent_id` to create sub-tasks (e.g., `sb-1.1`).
 - **List Tasks**: `sb list` (open) or `sb list --all`
+- **Repo Filter**: `sb list --repo` (current repo) or `sb list --global` (non-repo tasks)
 - **JSON Output**: Append `--json` to `list` or `show` for machine-readable data.
 - **Complete Task**: `sb done sb-1`
+- **Override DB Path**: Set `SB_DB_PATH=/path/to/db.json`
 
 ## Workflow
 
@@ -57,11 +59,13 @@ Example: `sb add "Fix critical bug" 0 "This blocks release"`
 - **`update`**: `sb update <id> [title=...] [desc=...] [p=...] [parent=...]`
   - Example: `sb update sb-1 p=0 desc="New description"`
 - **`dep`**: `sb dep <child> <parent>`
+  - Use `--global` for non-repo tasks or `--repo` to target a repo.
 
 ### List and Search
 - **`list`**: Shows open tasks with hierarchy.
 - **`ready`**: Shows tasks with no open blockers.
 - **`search`**: `sb search <keyword>`
+  - Use `--repo` to filter by current repo, `--global` for non-repo tasks.
 
 ### Reporting and Promotion
 - **`promote`**: `sb promote <id>`
@@ -80,7 +84,7 @@ To maintain perfect context across sessions, agents should follow this loop:
 3. **Verification**: Run project tests or take a screenshot to confirm the work is complete.
 4. **Updating**: As you complete sub-steps, run `sb done <id>`.
 5. **Clean up**: Run `sb compact` to remove closed tasks before committing.
-6. **Commit**: Commit code and `.sb.json` together so the tracker state matches the code state.
+6. **Commit**: Commit code changes. Only commit `.sb.json` when using `--local` mode.
 7. **Handoff**: Before ending a session, run `sb list --all` and provide a short summary of what was completed and what remains.
 
 ## Landing the Plane (Session Completion)
@@ -91,7 +95,7 @@ To maintain perfect context across sessions, agents should follow this loop:
 2. **Verify** - Run project tests or take a screenshot to confirm the work is complete
 3. **Update task status** - Mark completed work as done with `sb done <id>`
 4. **Clean up** - Run `sb compact` if you want to remove closed tasks
-5. **Commit local changes** - Commit code and `.sb.json` together. If a `commit` skill is available in the agent environment, use it. Otherwise run:
+5. **Commit local changes** - Commit code changes. Only commit `.sb.json` when using `--local` mode. If a `commit` skill is available in the agent environment, use it. Otherwise run:
    ```bash
    git add -A
    git commit -m "type(scope): description of change"
