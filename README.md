@@ -30,8 +30,9 @@ pipx install sb-tracker
 
 ### Alternative (pip)
 
+To install or upgrade to the latest version, use:
 ```bash
-pip install sb-tracker
+pip install -U sb-tracker
 ```
 
 ### From Source (development)
@@ -47,6 +48,18 @@ Verify installation:
 ```bash
 sb --help
 ```
+
+## Gemini CLI Skill Installation
+
+For AI agents that support Gemini CLI skills, you can install the `sb-tracker` skill to give them the context and instructions needed to manage tasks on your behalf. This is the recommended, non-intrusive way for agents to learn how to use this tool.
+
+From the root of this repository, run the following command:
+
+```bash
+npx @google/gemini-cli-skills install $(pwd)/skills/sb-tracker
+```
+
+This command installs the skill from the `skills/sb-tracker` directory into your Gemini CLI configuration.
 
 ## Quick Start
 
