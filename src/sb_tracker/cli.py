@@ -233,8 +233,12 @@ def load_db(db_path=None):
     try:
         with open(db_path, "r") as f:
             return _ensure_db_shape(json.load(f))
-    except (json.JSONDecodeError, IOError):
-        return _ensure_db_shape({"issues": []})
+    except json.JSONDecodeError as exc:
+        print(f"Error: Failed to parse database file '{db_path}': {exc}", file=sys.stderr)
+        raise SystemExit(1)
+    except OSError as exc:
+        print(f"Error: Unable to read database file '{db_path}': {exc}", file=sys.stderr)
+        raise SystemExit(1)
 
 
 def save_db(db, db_path=None):
