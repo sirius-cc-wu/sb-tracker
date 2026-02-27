@@ -1,12 +1,12 @@
 # SB Tracker - Simple Beads
 
-A lightweight, standalone task tracker that stores state in a JSON file. Perfect for individuals and agents to maintain context and track long-running or multi-step tasks without external dependencies.
+A lightweight, standalone task tracker that stores state in a local SQLite database. Perfect for individuals and agents to maintain context and track long-running or multi-step tasks without external dependencies.
 
 ## Features
 
 - **Zero Dependencies**: Pure Python, uses only stdlib (json, os, sys, datetime)
-- **Standalone**: One JSON file stores all state (global by default)
-- **Global Tracker**: Defaults to `~/.sb.json` with optional `SB_DB_PATH`
+- **Standalone**: One local SQLite file stores all state (global by default)
+- **Global Tracker**: Defaults to `~/.sb.sqlite` with optional `SB_DB_PATH`
 - **Repo Awareness**: Tasks can be scoped to a repo and filtered by repo
 - **Commit Snapshot**: Tasks capture the current repo commit on add/update
 - **Hierarchical Tasks**: Support for sub-tasks with parent-child relationships
@@ -100,11 +100,12 @@ sb done sb-1
 
 ### Environment
 
-- **`SB_DB_PATH`**: Override the default DB path (otherwise `~/.sb.json`)
+- **`SB_DB_PATH`**: Override the default DB path (otherwise `~/.sb.sqlite`)
+- On first run, `sb` will automatically migrate legacy `~/.sb.json` data into `~/.sb.sqlite` and create a timestamped backup of the original JSON file.
 
 ### Create and Modify
 
-- **`init`**: Initialize the database (defaults to `~/.sb.json`)
+- **`init`**: Initialize the database (defaults to `~/.sb.sqlite`)
 - **`add <title> [priority] [description] [parent_id]`**
   - Example: `sb add "Setup database" 1 "Configure PostgreSQL" sb-1`
 - **`update <id> [field=value ...]`**
@@ -180,7 +181,8 @@ sb done sb-1
 
 ## Database Format
 
-Tasks are stored in a JSON database (global by default at `~/.sb.json`) with this schema:
+Tasks are stored in a SQLite database (global by default at `~/.sb.sqlite`).
+For migration/import-export workflows, the logical payload schema is:
 
 ```json
 {
@@ -314,6 +316,14 @@ MIT License - See LICENSE file for details
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+Run tests with coverage before submitting changes:
+
+```bash
+PYTHONPATH=src pytest -q
+```
+
+The test configuration enforces a minimum coverage threshold of 90%.
+
 ## Troubleshooting
 
 ### `sb: command not found`
@@ -327,9 +337,9 @@ sb --help
 
 If you installed with `pip`, ensure the install location is on your `PATH`.
 
-### `.sb.json` not found
+### `.sb.sqlite` not found
 
-By default, the tracker uses `~/.sb.json`. You can override the location with `SB_DB_PATH`.
+By default, the tracker uses `~/.sb.sqlite`. You can override the location with `SB_DB_PATH`.
 
 To initialize:
 ```bash

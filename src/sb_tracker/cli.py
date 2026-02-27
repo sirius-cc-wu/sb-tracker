@@ -1,22 +1,49 @@
 #!/usr/bin/env python3
 """
 Simple Beads (sb) - A minimal, standalone issue tracker for individuals.
-No git hooks, no complex dependencies, just one JSON file.
+No git hooks, no complex dependencies, just one local database file.
 """
 
 import json
 import os
 import sys
 import hashlib
+import shutil
+import sqlite3
 import subprocess
+import tempfile
 from datetime import datetime
+
+DEFAULT_DB_PATH = "~/.sb.sqlite"
+LEGACY_JSON_DB_PATH = "~/.sb.json"
+
+
+def _default_db_state():
+    return _ensure_db_shape(
+        {
+            "issues": [],
+            "meta": {
+                "id_mode": "hash",
+                "child_counters": {},
+                "child_counters_bootstrapped": True,
+            },
+        }
+    )
+
+
+def _is_json_db_path(db_path):
+    return os.path.splitext(db_path)[1].lower() == ".json"
+
+
+def resolve_legacy_json_db_path():
+    return os.path.expanduser(LEGACY_JSON_DB_PATH)
 
 
 def resolve_db_path():
     env_path = os.environ.get("SB_DB_PATH")
     if env_path:
         return os.path.expanduser(env_path)
-    return os.path.expanduser("~/.sb.json")
+    return os.path.expanduser(DEFAULT_DB_PATH)
 
 
 def _run_git(args, cwd=None):
@@ -226,26 +253,203 @@ def _next_top_level_id(db, title, description, created_at):
     return _next_hash_id(db["issues"], title, description, created_at)
 
 
-def load_db(db_path=None):
-    db_path = db_path or resolve_db_path()
+def _load_db_from_json(db_path):
     if not os.path.exists(db_path):
-        return _ensure_db_shape({"issues": []})
+        return _default_db_state()
     try:
         with open(db_path, "r") as f:
             return _ensure_db_shape(json.load(f))
     except json.JSONDecodeError as exc:
-        print(f"Error: Failed to parse database file '{db_path}': {exc}", file=sys.stderr)
+        print(
+            f"Error: Failed to parse database file '{db_path}': {exc}",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
     except OSError as exc:
         print(f"Error: Unable to read database file '{db_path}': {exc}", file=sys.stderr)
         raise SystemExit(1)
 
 
+def _save_db_to_json(db, db_path):
+    db = dict(_ensure_db_shape(db))
+    db.pop("_storage_revision", None)
+
+    dir_name = os.path.dirname(db_path) or "."
+    os.makedirs(dir_name, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix=".sb-json-", suffix=".tmp", dir=dir_name)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(db, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, db_path)
+    except OSError as exc:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        print(f"Error: Unable to write database file '{db_path}': {exc}", file=sys.stderr)
+        raise SystemExit(1)
+
+
+def _connect_sqlite(db_path):
+    dir_name = os.path.dirname(db_path) or "."
+    os.makedirs(dir_name, exist_ok=True)
+    conn = sqlite3.connect(db_path, timeout=10.0)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=FULL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
+def _ensure_sqlite_storage(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS storage (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    state_row = conn.execute(
+        "SELECT value FROM storage WHERE key = 'db_json'"
+    ).fetchone()
+    if state_row is None:
+        conn.execute(
+            "INSERT INTO storage (key, value) VALUES ('db_json', ?)",
+            (json.dumps(_default_db_state(), indent=2),),
+        )
+    revision_row = conn.execute(
+        "SELECT value FROM storage WHERE key = 'revision'"
+    ).fetchone()
+    if revision_row is None:
+        conn.execute(
+            "INSERT INTO storage (key, value) VALUES ('revision', '0')"
+        )
+    conn.commit()
+
+
+def _load_db_from_sqlite(db_path):
+    try:
+        conn = _connect_sqlite(db_path)
+    except sqlite3.Error as exc:
+        print(f"Error: Unable to open SQLite database '{db_path}': {exc}", file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        _ensure_sqlite_storage(conn)
+        state_row = conn.execute(
+            "SELECT value FROM storage WHERE key = 'db_json'"
+        ).fetchone()
+        revision_row = conn.execute(
+            "SELECT value FROM storage WHERE key = 'revision'"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    try:
+        db = _ensure_db_shape(json.loads(state_row[0] if state_row else "{}"))
+    except json.JSONDecodeError as exc:
+        print(
+            f"Error: Failed to parse SQLite state payload in '{db_path}': {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    try:
+        revision = int(revision_row[0]) if revision_row else 0
+    except (TypeError, ValueError):
+        revision = 0
+    db["_storage_revision"] = revision
+    return db
+
+
+def _save_db_to_sqlite(db, db_path):
+    expected_revision = db.get("_storage_revision")
+    payload_db = dict(_ensure_db_shape(db))
+    payload_db.pop("_storage_revision", None)
+    payload = json.dumps(payload_db, indent=2)
+
+    try:
+        conn = _connect_sqlite(db_path)
+    except sqlite3.Error as exc:
+        print(f"Error: Unable to open SQLite database '{db_path}': {exc}", file=sys.stderr)
+        raise SystemExit(1)
+
+    try:
+        _ensure_sqlite_storage(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        current_row = conn.execute(
+            "SELECT value FROM storage WHERE key = 'revision'"
+        ).fetchone()
+        current_revision = int(current_row[0]) if current_row else 0
+        if expected_revision is None:
+            expected_revision = current_revision
+        if expected_revision != current_revision:
+            conn.rollback()
+            print(
+                "Error: Database changed by another process. Please retry the command.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+        conn.execute(
+            "UPDATE storage SET value = ? WHERE key = 'db_json'",
+            (payload,),
+        )
+        conn.execute(
+            "UPDATE storage SET value = ? WHERE key = 'revision'",
+            (str(current_revision + 1),),
+        )
+        conn.commit()
+        db["_storage_revision"] = current_revision + 1
+    except sqlite3.Error as exc:
+        conn.rollback()
+        print(f"Error: SQLite write failed for '{db_path}': {exc}", file=sys.stderr)
+        raise SystemExit(1)
+    finally:
+        conn.close()
+
+
+def _migrate_legacy_json_to_sqlite_if_needed(db_path):
+    default_db_path = os.path.expanduser(DEFAULT_DB_PATH)
+    if db_path != default_db_path or os.path.exists(db_path):
+        return
+    legacy_path = resolve_legacy_json_db_path()
+    if not os.path.exists(legacy_path):
+        return
+
+    legacy_db = _load_db_from_json(legacy_path)
+    backup_path = f"{legacy_path}.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    try:
+        shutil.copy2(legacy_path, backup_path)
+    except OSError as exc:
+        print(
+            f"Error: Failed to create backup '{backup_path}' before migration: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    _save_db_to_sqlite(legacy_db, db_path)
+    print(
+        f"Migrated legacy database from '{legacy_path}' to '{db_path}' (backup: '{backup_path}').",
+        file=sys.stderr,
+    )
+
+
+def load_db(db_path=None):
+    db_path = db_path or resolve_db_path()
+    if _is_json_db_path(db_path):
+        return _load_db_from_json(db_path)
+    _migrate_legacy_json_to_sqlite_if_needed(db_path)
+    return _load_db_from_sqlite(db_path)
+
+
 def save_db(db, db_path=None):
     db_path = db_path or resolve_db_path()
-    db = _ensure_db_shape(db)
-    with open(db_path, "w") as f:
-        json.dump(db, f, indent=2)
+    if _is_json_db_path(db_path):
+        _save_db_to_json(db, db_path)
+        return
+    _save_db_to_sqlite(db, db_path)
 
 
 def init():
@@ -253,17 +457,7 @@ def init():
     if os.path.exists(db_path):
         print(f"Error: {db_path} already exists.")
         return
-    save_db(
-        {
-            "issues": [],
-            "meta": {
-                "id_mode": "hash",
-                "child_counters": {},
-                "child_counters_bootstrapped": True,
-            },
-        },
-        db_path=db_path,
-    )
+    save_db(_default_db_state(), db_path=db_path)
     print(f"Initialized Simple Beads in {db_path}")
 
 

@@ -41,3 +41,14 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages]
 find = {where = ["src"]}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=sb_tracker --cov-report=term-missing --cov-fail-under=90"
+
+[tool.coverage.run]
+source = ["sb_tracker"]
+branch = true
+
+[tool.coverage.report]
+skip_empty = true
