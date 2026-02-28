@@ -1,6 +1,6 @@
 # SB Tracker (Simple Beads)
 
-A lightweight, standalone task tracker that stores state in a global JSON file by default. It's ideal for individual agent sessions to maintain context and track long-running or multi-step tasks across repositories.
+A lightweight, standalone task tracker that stores state in a global SQLite file by default. It's ideal for individual agent sessions to maintain context and track long-running or multi-step tasks across repositories.
 
 ## Installation
 
@@ -24,14 +24,14 @@ sb --help
 
 ## Quick Start
 
-- **Initialize**: Run `sb init` to create the global DB (defaults to `~/.sb.json`).
+- **Initialize**: Run `sb init` to create the global DB (defaults to `~/.sb.sqlite`).
 - **Add Task**: `sb add "Task Title" [priority] [desc] [parent_id]`
 - **Hierarchy**: Use `parent_id` to create sub-tasks (e.g., `sb-1.1`).
 - **List Tasks**: `sb list` (open) or `sb list --all`
 - **Repo Filter**: `sb list --repo` (current repo) or `sb list --global` (non-repo tasks)
 - **JSON Output**: Append `--json` to `list` or `show` for machine-readable data.
 - **Complete Task**: `sb done sb-1`
-- **Override DB Path**: Set `SB_DB_PATH=/path/to/db.json`
+- **Override DB Path**: Set `SB_DB_PATH=/path/to/db.sqlite`
 
 ## Workflow
 
@@ -58,6 +58,12 @@ Example: `sb add "Fix critical bug" 0 "This blocks release"`
 - **`add`**: `sb add <title> [priority] [desc] [parent_id]`
 - **`update`**: `sb update <id> [title=...] [desc=...] [p=...] [parent=...]`
   - Example: `sb update sb-1 p=0 desc="New description"`
+- **`begin`**: `sb begin <id> [--force-reopen]` (moves to Doing and captures context)
+- **`pause`**: `sb pause <id>` (Doing -> Ready)
+- **`review`**: `sb review <id>` (Doing -> Review)
+- **`finish`**: `sb finish <id>` (Doing/Review -> Done)
+- **`event`**: `sb event <switch|create|merge|remove> [--task <id>]` (for hook integrations)
+- **`link`**: `sb link <id> [branch=...] [worktree=...]` (manual context binding)
 - **`dep`**: `sb dep <child> <parent>`
   - Use `--global` for non-repo tasks or `--repo` to target a repo.
 
@@ -82,7 +88,7 @@ To maintain perfect context across sessions, agents should follow this loop:
 1. **Onboarding**: At the start of a task, run `sb list --json` or `sb ready` to understand the current state.
 2. **Execution**: Focus on the highest priority `ready` tasks.
 3. **Verification**: Run project tests or take a screenshot to confirm the work is complete.
-4. **Updating**: As you complete sub-steps, run `sb done <id>`.
+4. **Updating**: Use lifecycle commands while working: `sb begin`, `sb review`, `sb finish` (or `sb done`).
 5. **Clean up**: Run `sb compact` to remove closed tasks before committing.
 6. **Commit**: Commit code changes. Only commit `.sb.json` when using `--local` mode.
 7. **Handoff**: Before ending a session, run `sb list --all` and provide a short summary of what was completed and what remains.
@@ -109,6 +115,18 @@ To maintain perfect context across sessions, agents should follow this loop:
 - Do not leave finished work uncommitted; commit issue-by-issue so progress is resumable
 - Prefer the `commit` skill for commits when available; use raw git commit only as fallback
 - `sb promote` is optional and only for generating a Markdown report when needed
+
+## Optional Hook Integration
+
+`sb-tracker` does not require hooks, but hooks can call `sb event` to keep statuses synced.
+
+- Worktrunk example:
+  - `post-switch`: `sb event switch --repo --branch '{{ branch }}' --worktree '{{ worktree_path }}'`
+  - `post-create`: `sb event create --repo --branch '{{ branch }}' --worktree '{{ worktree_path }}'`
+  - `post-merge`: `sb event merge --repo --branch '{{ target }}'`
+- Git hooks:
+  - `post-checkout`: `sb event switch --repo --branch --worktree`
+  - `post-merge`: `sb event merge --repo --branch`
 
 ### Close Issue
 `sb done <id>`

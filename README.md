@@ -9,10 +9,12 @@ A lightweight, standalone task tracker that stores state in a local SQLite datab
 - **Global Tracker**: Defaults to `~/.sb.sqlite` with optional `SB_DB_PATH`
 - **Repo Awareness**: Tasks can be scoped to a repo and filtered by repo
 - **Commit Snapshot**: Tasks capture the current repo commit on add/update
+- **Branch/Worktree Context**: Tasks can capture repo branch and worktree path
 - **Hierarchical Tasks**: Support for sub-tasks with parent-child relationships
 - **Priority Levels**: Tasks support P0-P3 priority levels
 - **Kanban Workflow**: Configurable states and a board view
 - **Task Status Tracking**: Workflow status with timestamps
+- **Lifecycle Commands**: `begin/pause/review/finish` for explicit feature flow
 - **Dependencies**: Link tasks with blocking dependencies
 - **Audit Log**: Track all changes to each task with timestamps
 - **JSON Export**: Machine-readable output for integration
@@ -96,6 +98,8 @@ sb done sb-1
 
 ### Global Tracker Flags
 - **`--repo [path]`**: Filter to a repo (defaults to current repo if no path)
+- **`--branch [name]`**: Filter to a branch (defaults to current branch if no value)
+- **`--worktree [path]`**: Filter to a worktree (defaults to current worktree if no value)
 - **`--global`**: Show only tasks not tied to any repo
 
 ### Environment
@@ -113,6 +117,12 @@ sb done sb-1
   - Example: `sb update sb-1 p=0 desc="New description"`
 - **`status <id> <state>`**: Move a task to a Kanban state
   - Example: `sb status sb-1 Doing`
+- **`begin <id> [--force-reopen]`**: Move task to Doing and capture current context
+- **`pause <id>`**: Move task from Doing to Ready
+- **`review <id>`**: Move task from Doing to Review
+- **`finish <id>`**: Move task from Doing/Review to Done
+- **`link <id> [branch=...] [worktree=...]`**: Bind task to branch/worktree context
+- **`event <switch|create|merge|remove> [--task <id>]`**: Ingest external lifecycle event
 - **`dep <child_id> <parent_id>`**: Add a blocking dependency
   - Example: `sb dep sb-2 sb-1` (sb-2 blocked by sb-1)
 
@@ -121,7 +131,7 @@ sb done sb-1
 - **`list [--all] [--json]`**: Show non-done (or all) tasks with hierarchy
 - **`ready [--json]`**: Show tasks with no open blockers
 - **`search <keyword> [--json]`**: Search titles and descriptions
-  - Use `--repo` to filter to current repo, or `--global` to show only non-repo tasks
+  - Use `--repo`, `--branch`, `--worktree`, or `--global` to filter scope
 
 ### Reporting and Maintenance
 
@@ -151,8 +161,9 @@ sb done sb-1
 
 3. **Track Progress**: Update as you complete steps
    ```bash
-   sb done sb-1.1
-   sb done sb-1.2
+   sb begin sb-1.1
+   sb review sb-1.1
+   sb finish sb-1.1
    ```
 
 4. **End session cleanly**: Verify final state and hand off
@@ -164,6 +175,46 @@ sb done sb-1
    sb list --all
    ```
    Then provide a short summary of completed work and what remains.
+
+### Lifecycle Workflow
+
+Recommended explicit lifecycle:
+
+```bash
+sb begin <id>     # start active work (Doing)
+sb pause <id>     # park work back to Ready
+sb review <id>    # hand off for review
+sb finish <id>    # complete work (Done)
+```
+
+`sb done <id>` is still supported and maps to Done directly.
+
+### Optional Hook Adapters
+
+`sb-tracker` stays standalone. If you use worktrees/hook systems, call `sb event` from them.
+
+Worktrunk example (`.config/wt.toml`):
+
+```toml
+[post-switch]
+task = "sb event switch --repo --branch '{{ branch }}' --worktree '{{ worktree_path }}'"
+
+[post-create]
+task = "sb event create --repo --branch '{{ branch }}' --worktree '{{ worktree_path }}'"
+
+[post-merge]
+task = "sb event merge --repo --branch '{{ target }}'"
+```
+
+Git hook examples:
+
+```bash
+# .git/hooks/post-checkout
+sb event switch --repo --branch --worktree
+
+# .git/hooks/post-merge
+sb event merge --repo --branch
+```
 
 ### Task ID Format
 

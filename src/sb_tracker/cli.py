@@ -16,6 +16,7 @@ from datetime import datetime
 
 DEFAULT_DB_PATH = "~/.sb.sqlite"
 LEGACY_JSON_DB_PATH = "~/.sb.json"
+VALID_EVENT_TYPES = {"switch", "create", "merge", "remove"}
 
 
 def _default_db_state():
@@ -72,6 +73,20 @@ def get_repo_root(cwd=None):
 
 def get_repo_commit(cwd=None):
     return _run_git(["rev-parse", "HEAD"], cwd=cwd)
+
+
+def get_repo_branch(cwd=None):
+    branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd)
+    if branch == "HEAD":
+        return None
+    return branch
+
+
+def get_worktree_path(cwd=None):
+    top = _run_git(["rev-parse", "--show-toplevel"], cwd=cwd)
+    if not top:
+        return None
+    return os.path.realpath(top)
 
 
 def _encode_base36(data, length):
@@ -462,7 +477,13 @@ def init():
 
 
 def search_issues(
-    keyword, as_json=False, repo_filter=None, global_only=False, db_path=None
+    keyword,
+    as_json=False,
+    repo_filter=None,
+    branch_filter=None,
+    worktree_filter=None,
+    global_only=False,
+    db_path=None,
 ):
     db = load_db(db_path=db_path)
     keyword = keyword.lower()
@@ -471,6 +492,10 @@ def search_issues(
         if global_only and i.get("repo") is not None:
             continue
         if repo_filter is not None and i.get("repo") != repo_filter:
+            continue
+        if branch_filter is not None and i.get("repo_branch") != branch_filter:
+            continue
+        if worktree_filter is not None and i.get("worktree_path") != worktree_filter:
             continue
         if keyword in i["title"].lower() or keyword in i.get("description", "").lower():
             results.append(i)
@@ -499,6 +524,8 @@ def update_issue(
     parent_id=None,
     repo=None,
     repo_commit=None,
+    repo_branch=None,
+    worktree_path=None,
     repo_force=False,
     db_path=None,
 ):
@@ -549,6 +576,20 @@ def update_issue(
         elif current_repo == repo:
             issue["repo_commit"] = repo_commit
             changes["repo_commit"] = "updated"
+    if repo_branch is not None:
+        if current_repo is None and repo_force:
+            issue["repo_branch"] = repo_branch
+            changes["repo_branch"] = "updated"
+        elif current_repo == repo:
+            issue["repo_branch"] = repo_branch
+            changes["repo_branch"] = "updated"
+    if worktree_path is not None:
+        if current_repo is None and repo_force:
+            issue["worktree_path"] = worktree_path
+            changes["worktree_path"] = "updated"
+        elif current_repo == repo:
+            issue["worktree_path"] = worktree_path
+            changes["worktree_path"] = "updated"
 
     if changes:
         log_event(issue, "updated", {"changes": changes})
@@ -613,6 +654,8 @@ def add(
     parent_id=None,
     repo=None,
     repo_commit=None,
+    repo_branch=None,
+    worktree_path=None,
     db_path=None,
 ):
     db = load_db(db_path=db_path)
@@ -652,6 +695,10 @@ def add(
         issue["repo"] = repo
     if repo_commit is not None:
         issue["repo_commit"] = repo_commit
+    if repo_branch is not None:
+        issue["repo_branch"] = repo_branch
+    if worktree_path is not None:
+        issue["worktree_path"] = worktree_path
 
     log_event(issue, "created", {"title": title})
     db["issues"].append(issue)
@@ -680,6 +727,225 @@ def add_dependency(child_id, parent_id, db_path=None):
         print(f"Already linked.")
 
 
+def _touch_lifecycle(issue, event_type, started=False):
+    now = datetime.now().isoformat()
+    lifecycle = issue.setdefault("lifecycle", {})
+    lifecycle["last_event_at"] = now
+    lifecycle["last_event_type"] = event_type
+    if started and "started_at" not in lifecycle:
+        lifecycle["started_at"] = now
+
+
+def _capture_context_from_cwd():
+    repo = get_repo_root()
+    if not repo:
+        return None
+    return {
+        "repo": repo,
+        "repo_commit": get_repo_commit(cwd=repo),
+        "repo_branch": get_repo_branch(cwd=repo),
+        "worktree_path": get_worktree_path(cwd=repo),
+    }
+
+
+def _apply_context_to_issue(issue, context):
+    if not context:
+        return False
+    issue_repo = issue.get("repo")
+    context_repo = context.get("repo")
+    # Never silently overwrite context from another repo.
+    if issue_repo and issue_repo != context_repo:
+        return False
+    changed = False
+    for key in ("repo", "repo_commit", "repo_branch", "worktree_path"):
+        value = context.get(key)
+        if value is not None and issue.get(key) != value:
+            issue[key] = value
+            changed = True
+    return changed
+
+
+def _lifecycle_target(current_status, action, done_status):
+    if action == "begin":
+        if current_status == done_status:
+            return None
+        return "Doing"
+    if action == "pause":
+        return "Ready" if current_status == "Doing" else None
+    if action == "review":
+        return "Review" if current_status == "Doing" else None
+    if action == "finish":
+        return done_status if current_status in ("Doing", "Review") else None
+    return None
+
+
+def _persist_lifecycle_outcome(db, issue, issue_id, event_name, changed, db_path):
+    result = "updated" if changed else "noop"
+    log_event(issue, event_name, {"result": result, "status": issue.get("status")})
+    save_db(db, db_path=db_path)
+    if changed:
+        print(f"Updated {issue_id} status to {issue.get('status')}")
+    else:
+        print(f"No changes for {issue_id}")
+
+
+def lifecycle_action(issue_id, action, force_reopen=False, db_path=None):
+    db = load_db(db_path=db_path)
+    issue = next((i for i in db["issues"] if i["id"] == issue_id), None)
+    if not issue:
+        print(f"Error: Issue {issue_id} not found.")
+        return
+
+    config = get_kanban_config(db, issue.get("repo"))
+    current_status = normalize_status(issue.get("status"), config) or issue.get("status")
+    done_status = config["done"]
+
+    if action == "begin" and current_status == done_status and not force_reopen:
+        _touch_lifecycle(issue, "lifecycle_begin")
+        log_event(issue, "lifecycle_begin", {"result": "noop", "reason": "done"})
+        save_db(db, db_path=db_path)
+        print(f"No changes for {issue_id}: task is Done (use --force-reopen to resume)")
+        return
+
+    target = _lifecycle_target(current_status, action, done_status)
+    changed = False
+    if target is not None:
+        changed = _apply_status_change(issue, target, config)
+
+    # begin captures current repository context.
+    context_changed = False
+    if action == "begin":
+        context_changed = _apply_context_to_issue(issue, _capture_context_from_cwd())
+
+    event_name = f"lifecycle_{action}"
+    changed_any = changed or context_changed
+    _touch_lifecycle(issue, event_name, started=(action == "begin" and changed_any))
+    _persist_lifecycle_outcome(db, issue, issue_id, event_name, changed_any, db_path)
+
+
+def link_issue(issue_id, branch=None, worktree=None, db_path=None):
+    db = load_db(db_path=db_path)
+    issue = next((i for i in db["issues"] if i["id"] == issue_id), None)
+    if not issue:
+        print(f"Error: Issue {issue_id} not found.")
+        return
+    if branch is None and worktree is None:
+        print("Usage: sb link <id> [branch=<name>] [worktree=<path>]")
+        return
+
+    changes = {}
+    if branch is not None and issue.get("repo_branch") != branch:
+        changes["repo_branch"] = {"old": issue.get("repo_branch"), "new": branch}
+        issue["repo_branch"] = branch
+    if worktree is not None:
+        worktree_norm = os.path.realpath(os.path.abspath(os.path.expanduser(worktree)))
+        if issue.get("worktree_path") != worktree_norm:
+            changes["worktree_path"] = {
+                "old": issue.get("worktree_path"),
+                "new": worktree_norm,
+            }
+            issue["worktree_path"] = worktree_norm
+
+    _touch_lifecycle(issue, "context_linked")
+    if changes:
+        log_event(issue, "context_linked", {"result": "updated", "changes": changes})
+        save_db(db, db_path=db_path)
+        print(f"Linked context for {issue_id}")
+    else:
+        log_event(issue, "context_linked", {"result": "noop"})
+        save_db(db, db_path=db_path)
+        print(f"No changes for {issue_id}")
+
+
+def _open_issues(db):
+    return [i for i in db["issues"] if not is_issue_done(i, db)]
+
+
+def _resolve_event_target(db, task_id=None, repo=None, branch=None, worktree=None):
+    if task_id:
+        issue = next((i for i in db["issues"] if i["id"] == task_id), None)
+        if not issue:
+            return None, "not_found"
+        return issue, None
+
+    candidates = _open_issues(db)
+    if repo is not None:
+        candidates = [i for i in candidates if i.get("repo") == repo]
+    if branch is not None:
+        branch_matches = [i for i in candidates if i.get("repo_branch") == branch]
+        if len(branch_matches) == 1:
+            return branch_matches[0], None
+        if len(branch_matches) > 1:
+            return None, "ambiguous_branch"
+    if worktree is not None:
+        worktree_matches = [i for i in candidates if i.get("worktree_path") == worktree]
+        if len(worktree_matches) == 1:
+            return worktree_matches[0], None
+        if len(worktree_matches) > 1:
+            return None, "ambiguous_worktree"
+    return None, "no_match"
+
+
+def _apply_event(issue, event_type, db):
+    config = get_kanban_config(db, issue.get("repo"))
+    current_status = normalize_status(issue.get("status"), config) or issue.get("status")
+    done_status = config["done"]
+
+    changed = False
+    if event_type in ("switch", "create"):
+        if current_status != done_status:
+            changed = _apply_status_change(issue, "Doing", config)
+    elif event_type == "merge":
+        if current_status in ("Doing", "Review"):
+            changed = _apply_status_change(issue, "Review", config)
+    elif event_type == "remove":
+        changed = False
+
+    _touch_lifecycle(issue, "external_event")
+    log_event(
+        issue,
+        "external_event",
+        {
+            "event": event_type,
+            "result": "updated" if changed else "noop",
+            "status": issue.get("status"),
+        },
+    )
+    return changed
+def record_event(
+    event_type,
+    task_id=None,
+    repo=None,
+    branch=None,
+    worktree=None,
+    db_path=None,
+):
+    if event_type not in VALID_EVENT_TYPES:
+        print("Usage: sb event <switch|create|merge|remove> [--task <id>]")
+        return
+
+    db = load_db(db_path=db_path)
+    issue, error = _resolve_event_target(
+        db, task_id=task_id, repo=repo, branch=branch, worktree=worktree
+    )
+    if error:
+        messages = {
+            "not_found": f"Error: Issue {task_id} not found.",
+            "ambiguous_branch": "No changes: multiple open tasks match repo+branch",
+            "ambiguous_worktree": "No changes: multiple open tasks match repo+worktree",
+            "no_match": "No changes: no matching open task",
+        }
+        print(messages[error])
+        return
+
+    changed = _apply_event(issue, event_type, db)
+    save_db(db, db_path=db_path)
+    if changed:
+        print(f"Event {event_type}: updated {issue['id']} to {issue.get('status')}")
+    else:
+        print(f"Event {event_type}: recorded for {issue['id']}")
+
+
 def is_ready(issue, all_issues, db):
     if is_issue_done(issue, db):
         return False
@@ -697,6 +963,8 @@ def list_issues(
     as_json=False,
     ready_only=False,
     repo_filter=None,
+    branch_filter=None,
+    worktree_filter=None,
     global_only=False,
     db_path=None,
 ):
@@ -712,8 +980,13 @@ def list_issues(
 
     if global_only:
         issues = [i for i in issues if i.get("repo") is None]
-    elif repo_filter is not None:
-        issues = [i for i in issues if i.get("repo") == repo_filter]
+    else:
+        if repo_filter is not None:
+            issues = [i for i in issues if i.get("repo") == repo_filter]
+        if branch_filter is not None:
+            issues = [i for i in issues if i.get("repo_branch") == branch_filter]
+        if worktree_filter is not None:
+            issues = [i for i in issues if i.get("worktree_path") == worktree_filter]
 
     # Sort by ID (to keep hierarchy together), then priority
     issues.sort(key=lambda x: (x["id"], x.get("priority", 2)))
@@ -749,14 +1022,26 @@ def list_issues(
         )
 
 
-def board_view(as_json=False, repo_filter=None, global_only=False, db_path=None):
+def board_view(
+    as_json=False,
+    repo_filter=None,
+    branch_filter=None,
+    worktree_filter=None,
+    global_only=False,
+    db_path=None,
+):
     db = load_db(db_path=db_path)
     issues = db["issues"]
 
     if global_only:
         issues = [i for i in issues if i.get("repo") is None]
-    elif repo_filter is not None:
-        issues = [i for i in issues if i.get("repo") == repo_filter]
+    else:
+        if repo_filter is not None:
+            issues = [i for i in issues if i.get("repo") == repo_filter]
+        if branch_filter is not None:
+            issues = [i for i in issues if i.get("repo_branch") == branch_filter]
+        if worktree_filter is not None:
+            issues = [i for i in issues if i.get("worktree_path") == worktree_filter]
 
     config = get_kanban_config(db, repo_filter)
     columns = list(config["columns"])
@@ -916,6 +1201,16 @@ def show_issue(
                     print(f"\nRepo:        {i['repo']}")
                 if i.get("repo_commit"):
                     print(f"Repo Commit: {i['repo_commit']}")
+                if i.get("repo_branch"):
+                    print(f"Repo Branch: {i['repo_branch']}")
+                if i.get("worktree_path"):
+                    print(f"Worktree:    {i['worktree_path']}")
+                if i.get("lifecycle"):
+                    lifecycle = i["lifecycle"]
+                    if lifecycle.get("started_at"):
+                        print(f"Started At:  {lifecycle['started_at']}")
+                    if lifecycle.get("last_event_type"):
+                        print(f"Last Event:  {lifecycle.get('last_event_type')}")
 
                 if i.get("events"):
                     print("\nAudit Log:")
@@ -945,6 +1240,12 @@ def print_help():
     print("  dep <child> <parent>      Add dependency")
     print("  update <id> [field=val]   Update title, desc, p, status, parent")
     print("  status <id> <state>       Move issue to a Kanban state")
+    print("  begin <id> [--force-reopen]   Move task to Doing and capture context")
+    print("  pause <id>                Move task to Ready")
+    print("  review <id>               Move task to Review")
+    print("  finish <id>               Move task to Done")
+    print("  event <type> [--task <id>]    Record external lifecycle event")
+    print("  link <id> [branch=...] [worktree=...]   Link task to context")
     print("  promote <id>              Export task as Markdown")
     print("  show <id> [--json]        Show issue details")
     print("  done <id>                 Close issue")
@@ -952,6 +1253,8 @@ def print_help():
     print("  version                   Show version")
     print("\nGlobal tracker flags:")
     print("  --repo [path]             Filter by repo (default: current repo)")
+    print("  --branch [name]           Filter by branch (default: current branch)")
+    print("  --worktree [path]         Filter by worktree (default: current worktree)")
     print("  --global                  Filter only tasks with no repo")
 
 
@@ -965,6 +1268,10 @@ def main():
             "global_only": False,
             "repo": None,
             "repo_current": False,
+            "branch": None,
+            "branch_current": False,
+            "worktree": None,
+            "worktree_current": False,
         }
         cleaned = []
         i = 0
@@ -982,6 +1289,22 @@ def main():
                     opts["repo_current"] = True
                     i += 1
                 continue
+            if arg == "--branch":
+                if i + 1 < len(args) and not args[i + 1].startswith("-"):
+                    opts["branch"] = args[i + 1]
+                    i += 2
+                else:
+                    opts["branch_current"] = True
+                    i += 1
+                continue
+            if arg == "--worktree":
+                if i + 1 < len(args) and not args[i + 1].startswith("-"):
+                    opts["worktree"] = args[i + 1]
+                    i += 2
+                else:
+                    opts["worktree_current"] = True
+                    i += 1
+                continue
             cleaned.append(arg)
             i += 1
         return cleaned, opts
@@ -997,6 +1320,26 @@ def main():
             return repo_root or os.path.realpath(repo_path)
         if default_current:
             return get_repo_root(cwd=cwd)
+        return None
+
+    def resolve_worktree_filter(opts, cwd=None):
+        if opts["global_only"]:
+            return None
+        if opts["worktree_current"]:
+            return get_worktree_path(cwd=cwd)
+        if opts["worktree"]:
+            worktree = os.path.abspath(os.path.expanduser(opts["worktree"]))
+            detected = get_worktree_path(cwd=worktree)
+            return detected or os.path.realpath(worktree)
+        return None
+
+    def resolve_branch_filter(opts, cwd=None):
+        if opts["global_only"]:
+            return None
+        if opts["branch_current"]:
+            return get_repo_branch(cwd=cwd)
+        if opts["branch"]:
+            return opts["branch"]
         return None
 
     cmd = sys.argv[1]
@@ -1038,10 +1381,14 @@ def main():
 
             repo = None
             repo_commit = None
+            repo_branch = None
+            worktree_path = None
             if not opts["global_only"]:
                 repo = resolve_repo_filter(opts, default_current=True)
                 if repo:
                     repo_commit = get_repo_commit(cwd=repo)
+                    repo_branch = get_repo_branch(cwd=repo)
+                    worktree_path = get_worktree_path(cwd=repo)
 
             add(
                 title,
@@ -1050,6 +1397,8 @@ def main():
                 parent_id=parent,
                 repo=repo,
                 repo_commit=repo_commit,
+                repo_branch=repo_branch,
+                worktree_path=worktree_path,
                 db_path=resolve_db_path(),
             )
     elif cmd == "list":
@@ -1057,10 +1406,14 @@ def main():
         show_all = "--all" in args
         as_json = "--json" in args
         repo_filter = resolve_repo_filter(opts)
+        branch_filter = resolve_branch_filter(opts)
+        worktree_filter = resolve_worktree_filter(opts)
         list_issues(
             show_all,
             as_json,
             repo_filter=repo_filter,
+            branch_filter=branch_filter,
+            worktree_filter=worktree_filter,
             global_only=opts["global_only"],
             db_path=resolve_db_path(),
         )
@@ -1068,10 +1421,14 @@ def main():
         args, opts = parse_common_flags(sys.argv[2:])
         as_json = "--json" in args
         repo_filter = resolve_repo_filter(opts)
+        branch_filter = resolve_branch_filter(opts)
+        worktree_filter = resolve_worktree_filter(opts)
         list_issues(
             as_json=as_json,
             ready_only=True,
             repo_filter=repo_filter,
+            branch_filter=branch_filter,
+            worktree_filter=worktree_filter,
             global_only=opts["global_only"],
             db_path=resolve_db_path(),
         )
@@ -1082,10 +1439,14 @@ def main():
         else:
             as_json = "--json" in args
             repo_filter = resolve_repo_filter(opts)
+            branch_filter = resolve_branch_filter(opts)
+            worktree_filter = resolve_worktree_filter(opts)
             search_issues(
                 args[0],
                 as_json,
                 repo_filter=repo_filter,
+                branch_filter=branch_filter,
+                worktree_filter=worktree_filter,
                 global_only=opts["global_only"],
                 db_path=resolve_db_path(),
             )
@@ -1093,9 +1454,13 @@ def main():
         args, opts = parse_common_flags(sys.argv[2:])
         as_json = "--json" in args
         repo_filter = resolve_repo_filter(opts)
+        branch_filter = resolve_branch_filter(opts)
+        worktree_filter = resolve_worktree_filter(opts)
         board_view(
             as_json=as_json,
             repo_filter=repo_filter,
+            branch_filter=branch_filter,
+            worktree_filter=worktree_filter,
             global_only=opts["global_only"],
             db_path=resolve_db_path(),
         )
@@ -1121,16 +1486,22 @@ def main():
                         kwargs["parent_id"] = v
             repo = None
             repo_commit = None
+            repo_branch = None
+            worktree_path = None
             repo_force = False
             if not opts["global_only"]:
                 repo = resolve_repo_filter(opts, default_current=True)
                 repo_force = bool(opts["repo_current"] or opts["repo"])
                 if repo:
                     repo_commit = get_repo_commit(cwd=repo)
+                    repo_branch = get_repo_branch(cwd=repo)
+                    worktree_path = get_worktree_path(cwd=repo)
             update_issue(
                 issue_id,
                 repo=repo,
                 repo_commit=repo_commit,
+                repo_branch=repo_branch,
+                worktree_path=worktree_path,
                 repo_force=repo_force,
                 db_path=resolve_db_path(),
                 **kwargs,
@@ -1141,6 +1512,71 @@ def main():
             print("Usage: sb status <id> <state>")
         else:
             set_status(args[0], args[1], db_path=resolve_db_path())
+    elif cmd == "begin":
+        args, opts = parse_common_flags(sys.argv[2:])
+        force_reopen = "--force-reopen" in args
+        args = [a for a in args if a != "--force-reopen"]
+        if len(args) < 1:
+            print("Usage: sb begin <id> [--force-reopen]")
+        else:
+            lifecycle_action(args[0], "begin", force_reopen=force_reopen, db_path=resolve_db_path())
+    elif cmd == "pause":
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
+            print("Usage: sb pause <id>")
+        else:
+            lifecycle_action(args[0], "pause", db_path=resolve_db_path())
+    elif cmd == "review":
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
+            print("Usage: sb review <id>")
+        else:
+            lifecycle_action(args[0], "review", db_path=resolve_db_path())
+    elif cmd == "finish":
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
+            print("Usage: sb finish <id>")
+        else:
+            lifecycle_action(args[0], "finish", db_path=resolve_db_path())
+    elif cmd == "event":
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
+            print("Usage: sb event <switch|create|merge|remove> [--task <id>]")
+        else:
+            event_type = args[0]
+            task_id = None
+            i = 1
+            while i < len(args):
+                if args[i] == "--task" and i + 1 < len(args):
+                    task_id = args[i + 1]
+                    i += 2
+                else:
+                    i += 1
+            repo_filter = resolve_repo_filter(opts, default_current=True)
+            branch_filter = resolve_branch_filter(opts)
+            worktree_filter = resolve_worktree_filter(opts)
+            record_event(
+                event_type,
+                task_id=task_id,
+                repo=repo_filter,
+                branch=branch_filter,
+                worktree=worktree_filter,
+                db_path=resolve_db_path(),
+            )
+    elif cmd == "link":
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
+            print("Usage: sb link <id> [branch=<name>] [worktree=<path>]")
+        else:
+            issue_id = args[0]
+            branch = None
+            worktree = None
+            for arg in args[1:]:
+                if arg.startswith("branch="):
+                    branch = arg.split("=", 1)[1]
+                elif arg.startswith("worktree="):
+                    worktree = arg.split("=", 1)[1]
+            link_issue(issue_id, branch=branch, worktree=worktree, db_path=resolve_db_path())
     elif cmd == "promote":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:

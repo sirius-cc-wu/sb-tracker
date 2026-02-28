@@ -5,7 +5,7 @@ description: Track work with the `sb` CLI by creating, updating, listing, and co
 
 # SB Tracker
 
-Use `sb` to maintain a lightweight task list in a global JSON DB (default `~/.sb.json`).
+Use `sb` to maintain a lightweight task list in a global SQLite DB (default `~/.sb.sqlite`).
 
 ## Install
 
@@ -32,6 +32,12 @@ sb list
 sb list --all
 sb list --repo
 sb list --global
+sb begin <id>
+sb pause <id>
+sb review <id>
+sb finish <id>
+sb event <switch|create|merge|remove> [--task <id>]
+sb link <id> [branch=...] [worktree=...]
 sb ready
 sb show <id> [--json]
 sb search <keyword> [--repo|--global]
@@ -64,12 +70,13 @@ sb add "Fix critical bug" 0 "Blocks release"
 
 1. File remaining work as tasks or subtasks.
 2. Verify results (tests, screenshots, etc.).
-3. Mark completed tasks with `sb done <id>`.
+3. Move active tasks through lifecycle (`begin/review/finish`) or mark complete with `sb done <id>`.
 4. Optionally run `sb compact` to prune closed tasks.
 5. List all tasks with `sb list --all`.
 6. Provide a brief handoff summary and the next task to pick up.
 
 ## Notes
 
-- Override DB path with `SB_DB_PATH=/path/to/db.json` when needed.
+- Override DB path with `SB_DB_PATH=/path/to/db.sqlite` when needed.
 - Use `sb list --json` for context recovery on restart.
+- Optional hooks can call `sb event` to sync status during worktree/branch lifecycle events.

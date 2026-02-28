@@ -83,6 +83,14 @@ def test_core_helper_paths(capsys):
     assert cli._next_hash_id([], "t", "d", "ts").startswith("sb-")
     assert cli._next_top_level_id({"issues": ids, "meta": {"id_mode": "sequential"}}, "t", "d", "ts") == "sb-4"
 
+    assert cli.get_repo_branch(cwd="/tmp/nope") is None
+    assert cli.get_worktree_path(cwd="/tmp/nope") is None
+    assert cli._lifecycle_target("Backlog", "begin", "Done") == "Doing"
+    assert cli._lifecycle_target("Doing", "pause", "Done") == "Ready"
+    assert cli._lifecycle_target("Doing", "review", "Done") == "Review"
+    assert cli._lifecycle_target("Review", "finish", "Done") == "Done"
+    assert cli._lifecycle_target("Done", "begin", "Done") is None
+
 
 def test_json_and_sqlite_error_paths(tmp_path, monkeypatch):
     json_path = tmp_path / "data.json"
@@ -161,6 +169,19 @@ def test_functional_commands_cover_paths(tmp_path, monkeypatch, capsys):
 
     cli.add("blocked", "", 2, db_path=str(db_path))
     blocked_id = [i["id"] for i in cli.load_db(str(db_path))["issues"] if i["title"] == "blocked"][0]
+    cli.add(
+        "with-meta",
+        "",
+        2,
+        repo="/repo",
+        repo_commit="c0ffee",
+        repo_branch="feature-meta",
+        worktree_path="/repo.feature-meta",
+        db_path=str(db_path),
+    )
+    with_meta = next(i for i in cli.load_db(str(db_path))["issues"] if i["title"] == "with-meta")
+    assert with_meta["repo_branch"] == "feature-meta"
+    assert with_meta["worktree_path"] == "/repo.feature-meta"
 
     cli.add_dependency("missing", parent_id, db_path=str(db_path))
     cli.add_dependency(blocked_id, "missing", db_path=str(db_path))
@@ -171,16 +192,47 @@ def test_functional_commands_cover_paths(tmp_path, monkeypatch, capsys):
     cli.update_issue(parent_id, status="bad-status", db_path=str(db_path))
     cli.update_issue(parent_id, db_path=str(db_path))
     cli.update_issue(parent_id, title="parent2", description="d2", priority=0, status="Doing", parent_id="", db_path=str(db_path))
+    cli.update_issue(
+        parent_id,
+        repo="/repo",
+        repo_force=True,
+        repo_commit="abc123",
+        repo_branch="feature-x",
+        worktree_path="/repo.feature-x",
+        db_path=str(db_path),
+    )
+    updated = next(i for i in cli.load_db(str(db_path))["issues"] if i["id"] == parent_id)
+    assert updated["repo"] == "/repo"
+    assert updated["repo_commit"] == "abc123"
+    assert updated["repo_branch"] == "feature-x"
+    assert updated["worktree_path"] == "/repo.feature-x"
 
     cli.list_issues(db_path=str(db_path))
     cli.list_issues(show_all=True, as_json=True, db_path=str(db_path))
     cli.list_issues(ready_only=True, db_path=str(db_path))
     cli.list_issues(repo_filter="/nope", db_path=str(db_path))
+    cli.list_issues(branch_filter="feature-x", db_path=str(db_path))
     cli.list_issues(global_only=True, db_path=str(db_path))
     cli.search_issues("parent", db_path=str(db_path))
     cli.search_issues("no-match", db_path=str(db_path))
+    cli.search_issues("parent", branch_filter="feature-x", db_path=str(db_path))
+    cli.search_issues("parent", worktree_filter="/repo.feature-x", db_path=str(db_path))
     cli.board_view(db_path=str(db_path))
     cli.board_view(as_json=True, db_path=str(db_path))
+    cli.board_view(branch_filter="feature-x", db_path=str(db_path))
+    cli.board_view(worktree_filter="/repo.feature-x", db_path=str(db_path))
+    cli.lifecycle_action(parent_id, "begin", db_path=str(db_path))
+    cli.lifecycle_action(parent_id, "pause", db_path=str(db_path))
+    cli.lifecycle_action(parent_id, "begin", db_path=str(db_path))
+    cli.lifecycle_action(parent_id, "review", db_path=str(db_path))
+    cli.lifecycle_action(parent_id, "finish", db_path=str(db_path))
+    cli.lifecycle_action(parent_id, "begin", db_path=str(db_path))
+    cli.lifecycle_action(parent_id, "begin", force_reopen=True, db_path=str(db_path))
+    cli.link_issue(parent_id, branch="feature-link", worktree="/repo.feature-link", db_path=str(db_path))
+    cli.record_event("switch", task_id=parent_id, db_path=str(db_path))
+    cli.record_event("remove", task_id=parent_id, db_path=str(db_path))
+    cli.record_event("bad", task_id=parent_id, db_path=str(db_path))
+    cli.record_event("switch", db_path=str(db_path))
     cli.show_issue(parent_id, db_path=str(db_path))
     cli.show_issue(parent_id, as_json=True, db_path=str(db_path))
     cli.show_issue(parent_id, repo_filter="/nope", db_path=str(db_path))
@@ -214,6 +266,12 @@ def test_main_command_dispatch(tmp_path, monkeypatch, capsys):
         (["search"], "Usage: sb search"),
         (["update"], "Usage: sb update"),
         (["status", "only-id"], "Usage: sb status"),
+        (["begin"], "Usage: sb begin"),
+        (["pause"], "Usage: sb pause"),
+        (["review"], "Usage: sb review"),
+        (["finish"], "Usage: sb finish"),
+        (["event"], "Usage: sb event"),
+        (["link"], "Usage: sb link"),
         (["promote"], "Usage: sb promote"),
         (["dep", "x"], "Usage: sb dep"),
         (["show"], "Usage: sb show"),
@@ -232,9 +290,16 @@ def test_main_command_dispatch(tmp_path, monkeypatch, capsys):
 
     _run_main(monkeypatch, capsys, db_path, ["update", issue_id, "title=renamed", "desc=zzz", "p=0", "status=Ready", "parent="])
     _run_main(monkeypatch, capsys, db_path, ["status", issue_id, "Doing"])
+    _run_main(monkeypatch, capsys, db_path, ["pause", issue_id])
+    _run_main(monkeypatch, capsys, db_path, ["begin", issue_id])
+    _run_main(monkeypatch, capsys, db_path, ["review", issue_id])
+    _run_main(monkeypatch, capsys, db_path, ["finish", issue_id])
+    _run_main(monkeypatch, capsys, db_path, ["begin", issue_id, "--force-reopen"])
+    _run_main(monkeypatch, capsys, db_path, ["link", issue_id, "branch=feature-main", f"worktree={tmp_path}"])
+    _run_main(monkeypatch, capsys, db_path, ["event", "switch", "--task", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["ready", "--json"])
-    _run_main(monkeypatch, capsys, db_path, ["search", "rename"])
-    _run_main(monkeypatch, capsys, db_path, ["board", "--json"])
+    _run_main(monkeypatch, capsys, db_path, ["search", "rename", "--branch", "feature-main"])
+    _run_main(monkeypatch, capsys, db_path, ["board", "--json", "--branch", "feature-main"])
     _run_main(monkeypatch, capsys, db_path, ["show", issue_id, "--json"])
     _run_main(monkeypatch, capsys, db_path, ["stats"])
     _run_main(monkeypatch, capsys, db_path, ["done", issue_id])
@@ -242,6 +307,10 @@ def test_main_command_dispatch(tmp_path, monkeypatch, capsys):
     _run_main(monkeypatch, capsys, db_path, ["rm", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["list", "--repo", "--json"])
     _run_main(monkeypatch, capsys, db_path, ["list", "--repo", str(tmp_path), "--json"])
+    _run_main(monkeypatch, capsys, db_path, ["list", "--branch", "feature-main", "--json"])
+    _run_main(monkeypatch, capsys, db_path, ["list", "--worktree", str(tmp_path), "--json"])
+    _run_main(monkeypatch, capsys, db_path, ["search", "rename", "--worktree", str(tmp_path)])
+    _run_main(monkeypatch, capsys, db_path, ["board", "--worktree", str(tmp_path)])
 
 
 def test_additional_branches(tmp_path, monkeypatch, capsys):
@@ -271,29 +340,60 @@ def test_additional_branches(tmp_path, monkeypatch, capsys):
     db["issues"][0]["depends_on"] = ["a" * 20]
     db["issues"][0]["description"] = "hello"
     db["issues"][0]["repo_commit"] = "abc"
+    db["issues"][0]["repo_branch"] = "feature/a"
+    db["issues"][0]["worktree_path"] = "/repo.feature-a"
     db["issues"][0]["events"] = [{"type": "dep_added", "timestamp": "2026-01-01T12:00:00", "parent": "sb-x"}]
     cli.save_db(db, str(db_path))
 
     cli.search_issues("task", global_only=True, db_path=str(db_path))
     cli.search_issues("task", repo_filter="/repo", db_path=str(db_path))
+    cli.search_issues("task", branch_filter="feature/a", db_path=str(db_path))
+    cli.search_issues("task", worktree_filter="/repo.feature-a", db_path=str(db_path))
     cli.list_issues(as_json=True, db_path=str(db_path))
     cli.list_issues(show_all=True, db_path=str(db_path))
     cli.list_issues(show_all=True, global_only=True, db_path=str(db_path))
     cli.list_issues(show_all=True, repo_filter="/missing", db_path=str(db_path))
+    cli.list_issues(show_all=True, branch_filter="feature/a", db_path=str(db_path))
+    cli.list_issues(show_all=True, worktree_filter="/repo.feature-a", db_path=str(db_path))
     cli.board_view(global_only=True, db_path=str(db_path))
     cli.board_view(repo_filter="/repo", db_path=str(db_path))
+    cli.board_view(branch_filter="feature/a", db_path=str(db_path))
+    cli.board_view(worktree_filter="/repo.feature-a", db_path=str(db_path))
     cli.board_view(db_path=str(db_path))
     cli.show_stats(db_path=str(db_path))
     cli.show_issue("sb-1", db_path=str(db_path))
     cli.show_issue("sb-1", global_only=True, db_path=str(db_path))
     cli.set_status("sb-1", "Backlog", db_path=str(db_path))
     cli.add("orphan", parent_id="missing-parent", db_path=str(db_path))
+    cli.record_event("switch", repo="/repo", branch="feature/a", db_path=str(db_path))
+    cli.record_event("switch", repo="/repo", branch="feature/missing", db_path=str(db_path))
+    db = cli.load_db(str(db_path))
+    db["issues"].append(
+        {
+            "id": "sb-amb",
+            "title": "ambiguous",
+            "description": "",
+            "priority": 2,
+            "status": "Backlog",
+            "depends_on": [],
+            "events": [],
+            "created_at": "2026-01-01T00:00:00",
+            "repo": "/repo",
+            "repo_branch": "feature/a",
+        }
+    )
+    cli.save_db(db, str(db_path))
+    cli.record_event("switch", repo="/repo", branch="feature/a", db_path=str(db_path))
 
     out = capsys.readouterr().out
     assert "already exists" in out
     assert "Compaction Log" in out
     assert "Unmapped" in out
     assert "Repo Commit" in out
+    assert "Repo Branch" in out
+    assert "Worktree" in out
+    assert "No changes: no matching open task" in out
+    assert "No changes: multiple open tasks match repo+branch" in out
     assert "Parent issue missing-parent not found" in out
 
     monkeypatch.setattr(
