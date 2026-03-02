@@ -5,78 +5,128 @@ description: Track work with the `sb` CLI by creating, updating, listing, and co
 
 # SB Tracker
 
-Use `sb` to maintain a lightweight task list in a global SQLite DB (default `~/.sb.sqlite`).
+Use `sb` to maintain a lightweight task list in a global SQLite DB (default `~/.sb.sqlite`) so agent work is resumable across sessions.
 
-## Install
+## When to Use
 
-Verify the CLI is present:
+Use this skill when work is multi-step, spans sessions, or needs explicit handoff state.
+
+## Preconditions
+
+Verify the CLI is available:
 
 ```bash
 sb --help
 ```
 
-## Core Workflow
+DB behavior:
+- Default DB: `~/.sb.sqlite`
+- Override path: `SB_DB_PATH=/path/to/db.sqlite`
+- Legacy `~/.sb.json` is auto-migrated on first run
 
-1. Initialize the DB once with `sb init` (global by default).
-2. Add tasks with priorities and optional descriptions or parents.
-3. Work the highest-priority ready task.
-4. Mark tasks done as you complete them.
-5. At session end, list all tasks and summarize status.
+## Operational Loop (Required)
 
-## Key Commands
+1. **Onboard**
+   ```bash
+   sb list --json
+   # or
+   sb ready
+   ```
+2. **Break down work**
+   ```bash
+   sb add "Parent task" 1
+   sb add "Subtask" 1 "" <parent_id>
+   ```
+3. **Work lifecycle explicitly**
+   ```bash
+   sb begin <id>
+   sb review <id>
+   sb finish <id>
+   ```
+   Use `sb pause <id>` if work is parked.
+4. **Use dependencies and ready queue**
+   ```bash
+   sb dep <child_id> <parent_id>
+   sb ready
+   ```
+5. **Close session cleanly**
+   - Verify work (tests/screenshots as applicable)
+   - Complete tasks with `sb finish <id>` or `sb done <id>`
+   - Run `sb list --all`
+   - Share completed work and the next task
+
+## Command Playbook
+
+Create and update:
 
 ```bash
 sb init
 sb add "Task Title" [priority] [desc] [parent_id]
-sb list
-sb list --all
-sb list --repo
-sb list --global
-sb begin <id>
+sb update <id> [title=...] [desc=...] [p=...] [status=...] [parent=...]
+sb status <id> <state>
+sb begin <id> [--force-reopen]
 sb pause <id>
 sb review <id>
 sb finish <id>
-sb event <switch|create|merge|remove> [--task <id>]
-sb link <id> [branch=...] [worktree=...]
+sb done <id>
+```
+
+List and inspect:
+
+```bash
+sb list
+sb list --all
+sb list --json
+sb list --repo
+sb list --global
 sb ready
 sb show <id> [--json]
 sb search <keyword> [--repo|--global]
-sb update <id> [title=...] [desc=...] [p=...] [parent=...]
-sb dep <child> <parent> [--repo|--global]
-sb done <id>
-sb rm <id>
+sb board [--json]
 sb stats
-sb compact
 ```
 
-## Priority Scale
-
-Use numeric priorities when adding or updating:
+Dependencies, context, and maintenance:
 
 ```bash
-0 = P0 Critical
+sb dep <child_id> <parent_id> [--repo|--global]
+sb link <id> [branch=...] [worktree=...]
+sb event <switch|create|merge|remove> [--task <id>]
+sb promote <id>
+sb compact
+sb rm <id>
+```
+
+## Task Semantics
+
+Priority values:
+
+```bash
+0 = P0 Critical (blocking)
 1 = P1 High
 2 = P2 Medium (default)
 3 = P3 Low
 ```
 
-Example:
+IDs:
+- Root task IDs are hash-based (for example `sb-a3f8e9`)
+- Subtasks append a numeric suffix (for example `sb-a3f8e9.1`)
 
-```bash
-sb add "Fix critical bug" 0 "Blocks release"
-```
+Completion:
+- Preferred lifecycle is `begin -> review -> finish`
+- `sb done <id>` is a supported direct shortcut to done
 
-## Session Completion Checklist
+## End-of-Session Checklist (Must Do)
 
-1. File remaining work as tasks or subtasks.
-2. Verify results (tests, screenshots, etc.).
-3. Move active tasks through lifecycle (`begin/review/finish`) or mark complete with `sb done <id>`.
-4. Optionally run `sb compact` to prune closed tasks.
-5. List all tasks with `sb list --all`.
-6. Provide a brief handoff summary and the next task to pick up.
+1. File follow-up work as explicit tasks/subtasks.
+2. Verify implementation (tests/screenshots as applicable).
+3. Move task status out of ambiguous states; complete done work (`finish` or `done`).
+4. Optionally run `sb compact` to prune done items.
+5. Run `sb list --all` and confirm task state clarity.
+6. Provide a brief handoff summary plus next task to pick up.
 
-## Notes
+## Guardrails
 
-- Override DB path with `SB_DB_PATH=/path/to/db.sqlite` when needed.
-- Use `sb list --json` for context recovery on restart.
-- Optional hooks can call `sb event` to sync status during worktree/branch lifecycle events.
+- Do not leave completed work untracked; always close or split into follow-up tasks.
+- Do not leave tasks stuck in `Doing`/`Review` at session end without explicit intent.
+- Prefer repo-aware filters (`--repo`) when inside a repository; use `--global` for non-repo work.
