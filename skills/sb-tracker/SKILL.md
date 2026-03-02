@@ -96,6 +96,28 @@ sb compact
 sb rm <id>
 ```
 
+### Git Hook Integration (optional)
+
+`sb event` is designed to be called from git hooks to auto-advance task status:
+
+| Hook | Event | Effect |
+|---|---|---|
+| `post-checkout` | `switch` | → Doing |
+| `post-merge` | `merge` | → Review |
+
+```bash
+# .git/hooks/post-checkout
+#!/bin/bash
+[ "$3" = "1" ] && sb event switch --repo --branch --worktree
+
+# .git/hooks/post-merge
+#!/bin/bash
+sb event merge --repo --branch
+```
+
+`--branch` and `--worktree` without a value auto-detect from the current working directory.
+`sb event` exits 0 silently when no matching task is found — safe to call unconditionally.
+
 ## Task Semantics
 
 Priority values:
