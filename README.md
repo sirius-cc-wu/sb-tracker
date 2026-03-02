@@ -189,20 +189,7 @@ sb finish <id>    # complete work (Done)
 
 ### Optional Hook Adapters
 
-`sb-tracker` stays standalone. If you use worktrees/hook systems, call `sb event` from them.
-
-Worktrunk example (`.config/wt.toml`):
-
-```toml
-[post-switch]
-task = "sb event switch --repo --branch '{{ branch }}' --worktree '{{ worktree_path }}'"
-
-[post-create]
-task = "sb event create --repo --branch '{{ branch }}' --worktree '{{ worktree_path }}'"
-
-[post-merge]
-task = "sb event merge --repo --branch '{{ target }}'"
-```
+`sb-tracker` stays standalone. If you use git hooks, call `sb event` from them.
 
 Git hook examples:
 

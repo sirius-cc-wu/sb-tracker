@@ -120,10 +120,6 @@ To maintain perfect context across sessions, agents should follow this loop:
 
 `sb-tracker` does not require hooks, but hooks can call `sb event` to keep statuses synced.
 
-- Worktrunk example:
-  - `post-switch`: `sb event switch --repo --branch '{{ branch }}' --worktree '{{ worktree_path }}'`
-  - `post-create`: `sb event create --repo --branch '{{ branch }}' --worktree '{{ worktree_path }}'`
-  - `post-merge`: `sb event merge --repo --branch '{{ target }}'`
 - Git hooks:
   - `post-checkout`: `sb event switch --repo --branch --worktree`
   - `post-merge`: `sb event merge --repo --branch`
