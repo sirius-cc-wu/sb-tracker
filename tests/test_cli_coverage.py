@@ -265,7 +265,6 @@ def test_main_command_dispatch(tmp_path, monkeypatch, capsys):
         (["add"], "Usage: sb add"),
         (["search"], "Usage: sb search"),
         (["update"], "Usage: sb update"),
-        (["status", "only-id"], "Usage: sb status"),
         (["begin"], "Usage: sb begin"),
         (["pause"], "Usage: sb pause"),
         (["review"], "Usage: sb review"),
@@ -283,13 +282,13 @@ def test_main_command_dispatch(tmp_path, monkeypatch, capsys):
         assert expected in out
 
     _run_main(monkeypatch, capsys, db_path, ["init"])
-    out, _ = _run_main(monkeypatch, capsys, db_path, ["add", "--global", "task", "1", "desc"])
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["add", "--global", "task", "-p", "1", "--desc", "desc"])
     assert "Created" in out
     out, _ = _run_main(monkeypatch, capsys, db_path, ["list", "--all", "--json"])
     issue_id = json.loads(out)["issues"][0]["id"]
 
     _run_main(monkeypatch, capsys, db_path, ["update", issue_id, "title=renamed", "desc=zzz", "p=0", "status=Ready", "parent="])
-    _run_main(monkeypatch, capsys, db_path, ["status", issue_id, "Doing"])
+    _run_main(monkeypatch, capsys, db_path, ["begin", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["pause", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["begin", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["review", issue_id])
@@ -428,6 +427,6 @@ def test_additional_branches(tmp_path, monkeypatch, capsys):
         monkeypatch,
         capsys,
         tmp_path / "main2.sqlite",
-        ["add", "--repo", str(non_git_path), "task", "oops", "desc", "parent-x"],
+        ["add", "--repo", str(non_git_path), "task", "--parent", "parent-x"],
     )
     assert "Created" in out or "Parent issue" in out

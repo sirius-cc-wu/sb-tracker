@@ -1230,25 +1230,24 @@ def print_help():
     print("Usage: sb <command> [args]")
     print("Commands:")
     print("  init                      Initialize database (global by default)")
-    print("  add <title> [p] [desc] [parent]   Add issue")
-    print("  list [--all] [--json]     List issues")
-    print("  ready [--json]            List issues with no open blockers")
+    print("  add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID]   Add issue")
+    print("  list [--all] [--json]     List all open issues (use --all to include closed)")
+    print("  ready [--json]            List only issues with no unresolved dependencies")
     print("  search <keyword> [--json] Search titles and descriptions")
-    print("  board [--json]            Show Kanban board")
+    print("  board [--json]            Show issues grouped into Kanban columns")
     print("  stats                     Show task statistics")
     print("  compact                   Remove done issues")
     print("  dep <child> <parent>      Add dependency")
     print("  update <id> [field=val]   Update title, desc, p, status, parent")
-    print("  status <id> <state>       Move issue to a Kanban state")
     print("  begin <id> [--force-reopen]   Move task to Doing and capture context")
     print("  pause <id>                Move task to Ready")
     print("  review <id>               Move task to Review")
-    print("  finish <id>               Move task to Done")
+    print("  finish <id>               Kanban transition: Doing/Review → Done state")
     print("  event <type> [--task <id>]    Record external lifecycle event")
     print("  link <id> [branch=...] [worktree=...]   Link task to context")
     print("  promote <id>              Export task as Markdown")
     print("  show <id> [--json]        Show issue details")
-    print("  done <id>                 Close issue")
+    print("  done <id>                 Close/archive issue (marks task complete from any state)")
     print("  rm <id>                   Delete issue")
     print("  version                   Show version")
     print("\nGlobal tracker flags:")
@@ -1357,7 +1356,7 @@ def main():
     elif cmd == "add":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
-            print("Usage: sb add <title> [priority] [description] [parent_id]")
+            print("Usage: sb add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID]")
         else:
             title = args[0]
             p = 2
@@ -1365,19 +1364,28 @@ def main():
             parent = None
 
             rest = args[1:]
-            if rest:
-                try:
-                    p = int(rest[0])
-                    rest = rest[1:]
-                except ValueError:
-                    pass
-
-            if rest:
-                desc = rest[0]
-                rest = rest[1:]
-
-            if rest:
-                parent = rest[0]
+            named = []
+            i = 0
+            while i < len(rest):
+                if rest[i] in ("--priority", "-p") and i + 1 < len(rest):
+                    try:
+                        p = int(rest[i + 1])
+                    except ValueError:
+                        pass
+                    i += 2
+                elif rest[i] in ("--desc", "-d") and i + 1 < len(rest):
+                    desc = rest[i + 1]
+                    i += 2
+                elif rest[i] == "--parent" and i + 1 < len(rest):
+                    parent = rest[i + 1]
+                    i += 2
+                else:
+                    named.append(rest[i])
+                    i += 1
+            if named:
+                print(f"Unrecognized add arguments: {' '.join(named)}")
+                print("Usage: sb add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID]")
+                return
 
             repo = None
             repo_commit = None
@@ -1506,12 +1514,6 @@ def main():
                 db_path=resolve_db_path(),
                 **kwargs,
             )
-    elif cmd == "status":
-        args, opts = parse_common_flags(sys.argv[2:])
-        if len(args) < 2:
-            print("Usage: sb status <id> <state>")
-        else:
-            set_status(args[0], args[1], db_path=resolve_db_path())
     elif cmd == "begin":
         args, opts = parse_common_flags(sys.argv[2:])
         force_reopen = "--force-reopen" in args

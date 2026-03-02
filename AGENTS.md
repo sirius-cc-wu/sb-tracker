@@ -25,7 +25,7 @@ sb --help
 ## Quick Start
 
 - **Initialize**: Run `sb init` to create the global DB (defaults to `~/.sb.sqlite`).
-- **Add Task**: `sb add "Task Title" [priority] [desc] [parent_id]`
+- **Add Task**: `sb add "Task Title" [--priority/-p N] [--desc/-d TEXT] [--parent ID]`
 - **Hierarchy**: Use `parent_id` to create sub-tasks (e.g., `sb-1.1`).
 - **List Tasks**: `sb list` (open) or `sb list --all`
 - **Repo Filter**: `sb list --repo` (current repo) or `sb list --global` (non-repo tasks)
@@ -35,7 +35,7 @@ sb --help
 
 ## Workflow
 
-1. **Breakdown**: When given a complex task, create `sb-tracker` issues. Use hierarchical IDs for sub-steps (e.g., `add "Sub-step" 2 "..." sb-1`).
+1. **Breakdown**: When given a complex task, create `sb-tracker` issues. Use hierarchical IDs for sub-steps (e.g., `add "Sub-step" --priority 2 --desc "..." --parent sb-<id>`).
 2. **Execute**: Work on the highest priority (P0-P1) "ready" task.
 3. **Audit**: Use `show <id>` to see the status history and event log.
 4. **Context Recovery**: If a session restarts, run `sb list --json` to see the full state.
@@ -52,10 +52,10 @@ When using `sb add` or `sb update`, specify priority as a **numeric value** (0-3
 - **2** = P2 (Medium) - Normal priority (default)
 - **3** = P3 (Low) - Nice to have
 
-Example: `sb add "Fix critical bug" 0 "This blocks release"`
+Example: `sb add "Fix critical bug" --priority 0 --desc "This blocks release"`
 
 ### Create and Modify
-- **`add`**: `sb add <title> [priority] [desc] [parent_id]`
+- **`add`**: `sb add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID]`
 - **`update`**: `sb update <id> [title=...] [desc=...] [p=...] [parent=...]`
   - Example: `sb update sb-1 p=0 desc="New description"`
 - **`begin`**: `sb begin <id> [--force-reopen]` (moves to Doing and captures context)

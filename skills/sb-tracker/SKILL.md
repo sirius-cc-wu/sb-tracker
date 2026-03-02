@@ -34,8 +34,8 @@ DB behavior:
    ```
 2. **Break down work**
    ```bash
-   sb add "Parent task" 1
-   sb add "Subtask" 1 "" <parent_id>
+   sb add "Parent task" --priority 1
+   sb add "Subtask" --priority 1 --parent <parent_id>
    ```
 3. **Work lifecycle explicitly**
    ```bash
@@ -61,9 +61,8 @@ Create and update:
 
 ```bash
 sb init
-sb add "Task Title" [priority] [desc] [parent_id]
+sb add "Task Title" [--priority/-p N] [--desc/-d TEXT] [--parent ID]
 sb update <id> [title=...] [desc=...] [p=...] [status=...] [parent=...]
-sb status <id> <state>
 sb begin <id> [--force-reopen]
 sb pause <id>
 sb review <id>
@@ -109,12 +108,12 @@ Priority values:
 ```
 
 IDs:
-- Root task IDs are hash-based (for example `sb-a3f8e9`)
+- Root task IDs are hash-based by default (for example `sb-a3f8e9`); sequential IDs (`sb-1`) are used in legacy or single-repo mode
 - Subtasks append a numeric suffix (for example `sb-a3f8e9.1`)
 
 Completion:
-- Preferred lifecycle is `begin -> review -> finish`
-- `sb done <id>` is a supported direct shortcut to done
+- Preferred lifecycle: `begin → review → finish` (requires task to be in Doing/Review)
+- `sb done <id>` closes a task directly from any state, bypassing lifecycle validation
 
 ## End-of-Session Checklist (Must Do)
 
@@ -122,8 +121,9 @@ Completion:
 2. Verify implementation (tests/screenshots as applicable).
 3. Move task status out of ambiguous states; complete done work (`finish` or `done`).
 4. Optionally run `sb compact` to prune done items.
-5. Run `sb list --all` and confirm task state clarity.
-6. Provide a brief handoff summary plus next task to pick up.
+5. Commit code changes (use the `commit` skill if available, otherwise `git add -A && git commit -m "..."`).
+6. Run `sb list --all` and confirm task state clarity.
+7. Provide a brief handoff summary plus next task to pick up.
 
 ## Guardrails
 

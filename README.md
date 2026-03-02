@@ -75,7 +75,7 @@ Add a task:
 
 ```bash
 sb add "My first task"
-sb add "High priority task" 0 "This is urgent"
+sb add "High priority task" --priority 0 --desc "This is urgent"
 ```
 
 List tasks:
@@ -110,13 +110,11 @@ sb done sb-1
 ### Create and Modify
 
 - **`init`**: Initialize the database (defaults to `~/.sb.sqlite`)
-- **`add <title> [priority] [description] [parent_id]`**
-  - Example: `sb add "Setup database" 1 "Configure PostgreSQL" sb-1`
+- **`add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID]`**
+  - Example: `sb add "Setup database" --priority 1 --desc "Configure PostgreSQL" --parent sb-1`
 - **`update <id> [field=value ...]`**
   - Fields: `title`, `desc`, `p` (priority), `status`, `parent`
   - Example: `sb update sb-1 p=0 desc="New description"`
-- **`status <id> <state>`**: Move a task to a Kanban state
-  - Example: `sb status sb-1 Doing`
 - **`begin <id> [--force-reopen]`**: Move task to Doing and capture current context
 - **`pause <id>`**: Move task from Doing to Ready
 - **`review <id>`**: Move task from Doing to Review
@@ -128,19 +126,19 @@ sb done sb-1
 
 ### List and Search
 
-- **`list [--all] [--json]`**: Show non-done (or all) tasks with hierarchy
-- **`ready [--json]`**: Show tasks with no open blockers
+- **`list [--all] [--json]`**: List all open issues (use `--all` to include closed)
+- **`ready [--json]`**: List only issues with no unresolved dependencies
 - **`search <keyword> [--json]`**: Search titles and descriptions
   - Use `--repo`, `--branch`, `--worktree`, or `--global` to filter scope
 
 ### Reporting and Maintenance
 
 - **`show <id> [--json]`**: Display task details with audit log
-- **`board [--json]`**: Show Kanban board grouped by status
+- **`board [--json]`**: Show issues grouped into Kanban columns
 - **`promote <id>`**: Optional Markdown summary of task and sub-tasks
 - **`stats`**: Overview of progress and priority breakdown
 - **`compact`**: Archive done tasks to save space
-- **`done <id>`**: Mark task as done
+- **`done <id>`**: Close task from any state (skips Kanban lifecycle validation)
 - **`rm <id>`**: Permanently delete task
 
 ## Workflow
@@ -149,9 +147,9 @@ sb done sb-1
 
 1. **Breakdown**: Create tasks with hierarchies for complex work
    ```bash
-   sb add "Implement feature X"                    # Creates sb-1
-   sb add "Write unit tests" 1 "" sb-1             # Creates sb-1.1
-   sb add "Write integration tests" 1 "" sb-1      # Creates sb-1.2
+   sb add "Implement feature X"                              # Creates sb-<hash>
+   sb add "Write unit tests" --priority 1 --parent sb-<hash>  # Creates sub-task
+   sb add "Write integration tests" --priority 1 --parent sb-<hash>
    ```
 
 2. **Execute**: Focus on high-priority ready tasks
@@ -187,7 +185,7 @@ sb review <id>    # hand off for review
 sb finish <id>    # complete work (Done)
 ```
 
-`sb done <id>` is still supported and maps to Done directly.
+`sb done <id>` closes a task directly from any state, bypassing the Doing/Review requirement of `finish`.
 
 ### Optional Hook Adapters
 
@@ -292,52 +290,52 @@ The file may also include metadata used for ID generation and child counters:
 
 ```bash
 $ sb add "Build authentication system"
-Created sb-1: Build authentication system (P2)
+Created sb-a3f8e9: Build authentication system (P2)
 
-$ sb add "Design schema" 1 "" sb-1
-Created sb-1.1: Design schema (P1)
+$ sb add "Design schema" --priority 1 --parent sb-a3f8e9
+Created sb-a3f8e9.1: Design schema (P1)
 
-$ sb add "Implement login endpoint" 1 "" sb-1
-Created sb-1.2: Implement login endpoint (P1)
+$ sb add "Implement login endpoint" --priority 1 --parent sb-a3f8e9
+Created sb-a3f8e9.2: Implement login endpoint (P1)
 
-$ sb add "Write tests" 2 "" sb-1
-Created sb-1.3: Write tests (P2)
+$ sb add "Write tests" --priority 2 --parent sb-a3f8e9
+Created sb-a3f8e9.3: Write tests (P2)
 
 $ sb list
-ID           P  Status       Deps       Title
-sb-1         2  Backlog                 Build authentication system
-sb-1.1       1  Backlog                   Design schema
-sb-1.2       1  Backlog                   Implement login endpoint
-sb-1.3       2  Backlog                   Write tests
+ID              P  Status       Deps       Title
+sb-a3f8e9       2  Backlog                 Build authentication system
+sb-a3f8e9.1     1  Backlog                   Design schema
+sb-a3f8e9.2     1  Backlog                   Implement login endpoint
+sb-a3f8e9.3     2  Backlog                   Write tests
 ```
 
 ### Blocking Dependencies
 
 ```bash
-$ sb add "Deploy to production" 1
-Created sb-2: Deploy to production (P1)
+$ sb add "Deploy to production" --priority 1
+Created sb-b9d2c1: Deploy to production (P1)
 
-$ sb dep sb-2 sb-1
-Linked sb-2 -> depends on -> sb-1
+$ sb dep sb-b9d2c1 sb-a3f8e9
+Linked sb-b9d2c1 -> depends on -> sb-a3f8e9
 
 $ sb ready
 No issues found matching criteria.
 
-$ sb done sb-1.1
-Updated sb-1.1 status to Done
+$ sb done sb-a3f8e9.1
+Updated sb-a3f8e9.1 status to Done
 
-$ sb done sb-1.2
-Updated sb-1.2 status to Done
+$ sb done sb-a3f8e9.2
+Updated sb-a3f8e9.2 status to Done
 
-$ sb done sb-1.3
-Updated sb-1.3 status to Done
+$ sb done sb-a3f8e9.3
+Updated sb-a3f8e9.3 status to Done
 
-$ sb done sb-1
-Updated sb-1 status to Done
+$ sb done sb-a3f8e9
+Updated sb-a3f8e9 status to Done
 
 $ sb ready
-ID           P  Status       Deps       Title
-sb-2         1  Backlog                 Deploy to production
+ID              P  Status       Deps       Title
+sb-b9d2c1       1  Backlog                 Deploy to production
 ```
 
 ### Task Reporting
