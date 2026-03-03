@@ -25,6 +25,7 @@ def _default_db_state():
             "issues": [],
             "meta": {
                 "id_mode": "hash",
+                "id_prefix": "sb",
                 "child_counters": {},
                 "child_counters_bootstrapped": True,
             },
@@ -143,6 +144,10 @@ def _ensure_db_shape(db):
     meta = db["meta"]
     if "id_mode" not in meta or not isinstance(meta["id_mode"], str):
         meta["id_mode"] = "hash"
+    if "id_prefix" not in meta or not isinstance(meta["id_prefix"], str):
+        meta["id_prefix"] = "sb"
+    if "prefix_by_repo" not in meta or not isinstance(meta["prefix_by_repo"], dict):
+        meta["prefix_by_repo"] = {}
     if "child_counters" not in meta or not isinstance(meta["child_counters"], dict):
         meta["child_counters"] = {}
     if "kanban" not in meta or not isinstance(meta["kanban"], dict):
@@ -232,7 +237,7 @@ def _apply_status_change(issue, new_status, config):
     return True
 
 
-def _next_sequential_id(issues):
+def _next_sequential_id(issues, prefix="sb"):
     max_id = 0
     for issue in issues:
         issue_id = issue.get("id", "")
@@ -245,27 +250,37 @@ def _next_sequential_id(issues):
                     max_id = val
         except (IndexError, ValueError):
             continue
-    return f"sb-{max_id + 1}"
+    return f"{prefix}-{max_id + 1}"
 
 
-def _next_hash_id(issues, title, description, created_at):
+def _next_hash_id(issues, title, description, created_at, prefix="sb"):
     existing_ids = {issue.get("id", "") for issue in issues}
     for length in range(6, 9):
         for nonce in range(100):
             content = f"{title}|{description}|{created_at}|{nonce}"
             digest = hashlib.sha256(content.encode("utf-8")).digest()[:5]
             short = _encode_base36(digest, length)
-            candidate = f"sb-{short}"
+            candidate = f"{prefix}-{short}"
             if candidate not in existing_ids:
                 return candidate
     raise RuntimeError("failed to generate unique hash ID")
 
 
-def _next_top_level_id(db, title, description, created_at):
+def _resolve_prefix(db, repo=None):
+    meta = db.get("meta", {})
+    if repo:
+        repo_prefix = meta.get("prefix_by_repo", {}).get(repo)
+        if repo_prefix:
+            return repo_prefix
+    return meta.get("id_prefix", "sb")
+
+
+def _next_top_level_id(db, title, description, created_at, repo=None):
     mode = db.get("meta", {}).get("id_mode", "hash")
+    prefix = _resolve_prefix(db, repo)
     if mode == "sequential":
-        return _next_sequential_id(db["issues"])
-    return _next_hash_id(db["issues"], title, description, created_at)
+        return _next_sequential_id(db["issues"], prefix=prefix)
+    return _next_hash_id(db["issues"], title, description, created_at, prefix=prefix)
 
 
 def _load_db_from_json(db_path):
@@ -668,12 +683,19 @@ def add(
     repo_branch=None,
     worktree_path=None,
     needs_review=False,
+    custom_id=None,
     db_path=None,
 ):
     db = load_db(db_path=db_path)
     created_at = datetime.now().isoformat()
 
-    if parent_id:
+    if custom_id is not None:
+        existing_ids = {issue.get("id", "") for issue in db["issues"]}
+        if custom_id in existing_ids:
+            print(f"Error: ID '{custom_id}' already exists.")
+            return
+        new_id = custom_id
+    elif parent_id:
         parent = next((i for i in db["issues"] if i["id"] == parent_id), None)
         if not parent:
             print(f"Error: Parent issue {parent_id} not found.")
@@ -688,7 +710,7 @@ def add(
             new_id = f"{parent_id}.{next_sub}"
         counters[parent_id] = next_sub
     else:
-        new_id = _next_top_level_id(db, title, description, created_at)
+        new_id = _next_top_level_id(db, title, description, created_at, repo=repo)
 
     config = get_kanban_config(db, repo)
     issue = {
@@ -1290,6 +1312,9 @@ def print_help():
     print("  show <id> [--json]        Show issue details")
     print("  done <id>                 Close/archive issue (marks task complete from any state)")
     print("  rm <id>                   Delete issue")
+    print("  config prefix <PREFIX>    Set ID prefix for current repo (e.g. BNC)")
+    print("  config prefix <PREFIX> --global  Set global default ID prefix")
+    print("  config get prefix         Show effective ID prefix")
     print("  version                   Show version")
     print("\nGlobal tracker flags:")
     print("  --repo [path]             Filter by repo (default: current repo)")
@@ -1404,6 +1429,7 @@ def main():
             desc = ""
             parent = None
             needs_review = False
+            custom_id = None
 
             rest = args[1:]
             named = []
@@ -1424,12 +1450,15 @@ def main():
                 elif rest[i] == "--needs-review":
                     needs_review = True
                     i += 1
+                elif rest[i] == "--id" and i + 1 < len(rest):
+                    custom_id = rest[i + 1]
+                    i += 2
                 else:
                     named.append(rest[i])
                     i += 1
             if named:
                 print(f"Unrecognized add arguments: {' '.join(named)}")
-                print("Usage: sb add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review]")
+                print("Usage: sb add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review] [--id EXTERNAL_ID]")
                 return
 
             repo = None
@@ -1453,6 +1482,7 @@ def main():
                 repo_branch=repo_branch,
                 worktree_path=worktree_path,
                 needs_review=needs_review,
+                custom_id=custom_id,
                 db_path=resolve_db_path(),
             )
     elif cmd == "list":
@@ -1677,6 +1707,35 @@ def main():
             print("Usage: sb rm <id>")
         else:
             delete_issue(args[0], db_path=resolve_db_path())
+    elif cmd == "config":
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 2:
+            print("Usage: sb config prefix <PREFIX> [--global]")
+            print("       sb config get prefix")
+        elif args[0] == "get" and args[1] == "prefix":
+            db = load_db(db_path=resolve_db_path())
+            repo = resolve_repo_filter(opts, default_current=True)
+            prefix = _resolve_prefix(db, repo)
+            source = "repo" if (repo and db["meta"].get("prefix_by_repo", {}).get(repo)) else "global"
+            print(f"Effective prefix: {prefix} (from {source})")
+        elif args[0] == "prefix":
+            raw_prefix = args[1].rstrip("-").upper()
+            db = load_db(db_path=resolve_db_path())
+            if opts["global_only"]:
+                db["meta"]["id_prefix"] = raw_prefix
+                save_db(db, db_path=resolve_db_path())
+                print(f"Global prefix set to: {raw_prefix}")
+            else:
+                repo = resolve_repo_filter(opts, default_current=True)
+                if not repo:
+                    print("Error: not inside a git repo. Use --global to set the global prefix.")
+                    return
+                db["meta"].setdefault("prefix_by_repo", {})[repo] = raw_prefix
+                save_db(db, db_path=resolve_db_path())
+                print(f"Prefix for {repo} set to: {raw_prefix}")
+        else:
+            print("Usage: sb config prefix <PREFIX> [--global]")
+            print("       sb config get prefix")
     else:
         print(f"Unknown command: {cmd}")
 

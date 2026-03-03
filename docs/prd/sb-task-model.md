@@ -42,11 +42,16 @@ Each issue supports:
 ## 5. ID and Hierarchy Requirements
 
 1. Top-level IDs:
-   - default hash-based IDs (`sb-xxxxxx...`)
-   - optional sequential mode via `meta.id_mode`
-2. Child IDs:
-   - `<parent>.<n>` with monotonic per-parent counters
-3. IDs must not be reused after deletion.
+   - Hash-based by default: `<prefix>-xxxxxx` (e.g. `sb-a3f8e9`, `BNC-a3f8e9`)
+   - Optional sequential mode via `meta.id_mode = "sequential"` (e.g. `BNC-1`, `BNC-2`)
+   - External IDs can be set explicitly via `sb add --id <EXTERNAL_ID>` (e.g. Jira: `B1XF-3213`)
+2. ID prefix:
+   - Global default: `meta.id_prefix` (defaults to `sb`)
+   - Per-repo override: `meta.prefix_by_repo[repo_root]`
+   - Configure via: `sb config prefix <PREFIX>` (repo) or `sb config prefix <PREFIX> --global`
+3. Child IDs:
+   - `<parent>.<n>` with monotonic per-parent counters (inherits parent prefix)
+4. IDs must not be reused after deletion.
 
 ## 6. Status Model Requirements
 
@@ -62,9 +67,14 @@ Rules:
 ## 7. Mutation Command Requirements
 
 ### 7.1 Core
-1. `add` creates tasks with optional parent/repo context and `--needs-review` flag.
+1. `add` creates tasks with optional parent/repo context, `--needs-review` flag, and `--id EXTERNAL_ID`.
 2. `update` updates title/description/priority/status/parent, context fields, and `needs_review=true|false`.
 3. `rm` deletes task by ID.
+
+### 7.2 Configuration
+1. `config prefix <PREFIX>` sets the ID prefix for the current repo.
+2. `config prefix <PREFIX> --global` sets the global default prefix.
+3. `config get prefix` prints the effective prefix for the current context.
 
 ### 7.2 Dependency
 1. `dep <child> <parent>` adds a blocking dependency.

@@ -546,3 +546,83 @@ def test_needs_review_lifecycle(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     tg = next(i for i in cli.load_db(db_path)["issues"] if i["id"] == tg_id)
     assert not tg.get("needs_review")
+
+
+def test_prefix_config_and_custom_id(tmp_path, monkeypatch, capsys):
+    db_path = str(tmp_path / "db.sqlite")
+    monkeypatch.setenv("SB_DB_PATH", db_path)
+    cli.init()
+    capsys.readouterr()
+
+    # Default prefix is "sb"
+    cli.add("default task", db_path=db_path)
+    db = cli.load_db(db_path)
+    assert db["issues"][0]["id"].startswith("sb-")
+
+    # Set global prefix
+    db["meta"]["id_prefix"] = "BNC"
+    cli.save_db(db, db_path=db_path)
+
+    cli.add("bnc task", db_path=db_path)
+    db = cli.load_db(db_path)
+    bnc_task = next(i for i in db["issues"] if i["title"] == "bnc task")
+    assert bnc_task["id"].startswith("BNC-")
+
+    # Set repo-specific prefix (overrides global)
+    db["meta"]["prefix_by_repo"]["/myrepo"] = "SB"
+    cli.save_db(db, db_path=db_path)
+
+    cli.add("sb task", db_path=db_path, repo="/myrepo")
+    db = cli.load_db(db_path)
+    sb_task = next(i for i in db["issues"] if i["title"] == "sb task")
+    assert sb_task["id"].startswith("SB-")
+
+    # _resolve_prefix: repo with no config falls back to global
+    prefix = cli._resolve_prefix(db, repo="/unknown-repo")
+    assert prefix == "BNC"
+
+    # custom_id creates task with literal external ID
+    cli.add("jira mirror", custom_id="B1XF-3213", db_path=db_path)
+    capsys.readouterr()
+    db = cli.load_db(db_path)
+    jira = next(i for i in db["issues"] if i["id"] == "B1XF-3213")
+    assert jira["title"] == "jira mirror"
+
+    # duplicate custom_id is rejected
+    cli.add("duplicate", custom_id="B1XF-3213", db_path=db_path)
+    out = capsys.readouterr().out
+    assert "already exists" in out
+    assert len([i for i in cli.load_db(db_path)["issues"] if i["id"] == "B1XF-3213"]) == 1
+
+
+def test_config_command(tmp_path, monkeypatch, capsys):
+    db_path = tmp_path / "db.sqlite"
+
+    # Set global prefix via CLI
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["init"])
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["config", "prefix", "BNC-", "--global"])
+    assert "BNC" in out
+
+    # Get prefix shows global
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["config", "get", "prefix"])
+    assert "BNC" in out
+
+    # Set repo prefix (no git repo here, so it errors gracefully)
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["config", "prefix", "SB"])
+    # Either sets it (if git detected) or prints an error — both are valid
+
+    # Unknown config subcommand shows usage
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["config", "unknown", "arg"])
+    assert "Usage" in out
+
+    # Missing args shows usage
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["config"])
+    assert "Usage" in out
+
+    # Add with --id flag via CLI
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["add", "--global", "jira task", "--id", "PROJ-999"])
+    assert "PROJ-999" in out
+
+    # Duplicate --id rejected
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["add", "--global", "dup", "--id", "PROJ-999"])
+    assert "already exists" in out

@@ -110,9 +110,10 @@ sb done sb-1
 ### Create and Modify
 
 - **`init`**: Initialize the database (defaults to `~/.sb.sqlite`)
-- **`add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review]`**
+- **`add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review] [--id EXTERNAL_ID]`**
   - Example: `sb add "Setup database" --priority 1 --desc "Configure PostgreSQL" --parent sb-1`
   - `--needs-review`: marks the task as requiring human sign-off before it can be closed (see `finish`)
+  - `--id EXTERNAL_ID`: assign a literal external ID (e.g. `--id B1XF-3213` to mirror a Jira ticket)
 - **`update <id> [field=value ...]`**
   - Fields: `title`, `desc`, `p` (priority), `status`, `parent`, `needs_review` (true|false)
   - Example: `sb update sb-1 p=0 needs_review=true`
@@ -141,6 +142,9 @@ sb done sb-1
 - **`compact`**: Archive done tasks to save space
 - **`done <id>`**: Close task from any state (skips Kanban lifecycle validation)
 - **`rm <id>`**: Permanently delete task
+- **`config prefix <PREFIX>`**: Set ID prefix for current repo (e.g. `sb config prefix BNC`)
+- **`config prefix <PREFIX> --global`**: Set global default prefix
+- **`config get prefix`**: Show effective prefix for the current context
 
 ## Workflow
 

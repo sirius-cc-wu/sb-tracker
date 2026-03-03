@@ -61,8 +61,11 @@ Create and update:
 
 ```bash
 sb init
-sb add "Task Title" [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review]
+sb add "Task Title" [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review] [--id EXTERNAL_ID]
 sb update <id> [title=...] [desc=...] [p=...] [status=...] [parent=...] [needs_review=true|false]
+sb config prefix <PREFIX>          # set prefix for current repo (e.g. BNC)
+sb config prefix <PREFIX> --global # set global default prefix
+sb config get prefix               # show effective prefix
 sb begin <id> [--force-reopen]
 sb pause <id>
 sb review <id>
@@ -130,8 +133,10 @@ Priority values:
 ```
 
 IDs:
-- Root task IDs are hash-based by default (for example `sb-a3f8e9`); sequential IDs (`sb-1`) are used in legacy or single-repo mode
-- Subtasks append a numeric suffix (for example `sb-a3f8e9.1`)
+- Root task IDs are hash-based by default: `<prefix>-xxxxxx` (e.g. `sb-a3f8e9`, `BNC-a3f8e9`)
+- Subtasks append a numeric suffix (e.g. `BNC-a3f8e9.1`)
+- External IDs (Jira, etc.) can be set literally: `sb add "..." --id B1XF-3213`
+- Configure prefix per-repo: `sb config prefix BNC` or globally: `sb config prefix SB --global`
 
 Completion:
 - Preferred lifecycle: `begin → review → finish` (requires task to be in Doing/Review)
