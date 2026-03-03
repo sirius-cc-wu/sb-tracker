@@ -188,6 +188,14 @@ def test_functional_commands_cover_paths(tmp_path, monkeypatch, capsys):
     cli.add_dependency(blocked_id, parent_id, db_path=str(db_path))
     cli.add_dependency(blocked_id, parent_id, db_path=str(db_path))
 
+    # scope validation: --global rejects repo-linked issues
+    with_meta_id = with_meta["id"]
+    cli.add_dependency(with_meta_id, parent_id, db_path=str(db_path), global_only=True)
+    cli.add_dependency(blocked_id, with_meta_id, db_path=str(db_path), global_only=True)
+    # scope validation: --repo rejects issues not in that repo
+    cli.add_dependency(blocked_id, parent_id, db_path=str(db_path), repo_filter="/other-repo")
+    cli.add_dependency(with_meta_id, parent_id, db_path=str(db_path), repo_filter="/other-repo")
+
     cli.update_issue("missing", title="x", db_path=str(db_path))
     cli.update_issue(parent_id, status="bad-status", db_path=str(db_path))
     cli.update_issue(parent_id, db_path=str(db_path))
