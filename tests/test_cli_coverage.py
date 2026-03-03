@@ -188,13 +188,7 @@ def test_functional_commands_cover_paths(tmp_path, monkeypatch, capsys):
     cli.add_dependency(blocked_id, parent_id, db_path=str(db_path))
     cli.add_dependency(blocked_id, parent_id, db_path=str(db_path))
 
-    # scope validation: --global rejects repo-linked issues
     with_meta_id = with_meta["id"]
-    cli.add_dependency(with_meta_id, parent_id, db_path=str(db_path), global_only=True)
-    cli.add_dependency(blocked_id, with_meta_id, db_path=str(db_path), global_only=True)
-    # scope validation: --repo rejects issues not in that repo
-    cli.add_dependency(blocked_id, parent_id, db_path=str(db_path), repo_filter="/other-repo")
-    cli.add_dependency(with_meta_id, parent_id, db_path=str(db_path), repo_filter="/other-repo")
 
     cli.update_issue("missing", title="x", db_path=str(db_path))
     cli.update_issue(parent_id, status="bad-status", db_path=str(db_path))
@@ -438,3 +432,56 @@ def test_additional_branches(tmp_path, monkeypatch, capsys):
         ["add", "--repo", str(non_git_path), "task", "--parent", "parent-x"],
     )
     assert "Created" in out or "Parent issue" in out
+
+
+def test_add_dependency_scope_validation(tmp_path, monkeypatch, capsys):
+    db_path = str(tmp_path / "db.sqlite")
+    monkeypatch.setenv("SB_DB_PATH", db_path)
+    cli.init()
+
+    cli.add("global-a", "", 2, db_path=db_path)
+    cli.add("global-b", "", 2, db_path=db_path)
+    cli.add("repo-a", "", 2, repo="/myrepo", db_path=db_path)
+    cli.add("repo-b", "", 2, repo="/myrepo", db_path=db_path)
+
+    db = cli.load_db(db_path)
+    gid_a = next(i["id"] for i in db["issues"] if i["title"] == "global-a")
+    gid_b = next(i["id"] for i in db["issues"] if i["title"] == "global-b")
+    rid_a = next(i["id"] for i in db["issues"] if i["title"] == "repo-a")
+    rid_b = next(i["id"] for i in db["issues"] if i["title"] == "repo-b")
+
+    def get_deps(issue_id):
+        return next(i for i in cli.load_db(db_path)["issues"] if i["id"] == issue_id)["depends_on"]
+
+    # --global rejects issues that have a repo
+    cli.add_dependency(rid_a, gid_a, db_path=db_path, global_only=True)
+    out = capsys.readouterr().out
+    assert "not a global" in out
+    assert gid_a not in get_deps(rid_a)  # dep was not saved
+
+    cli.add_dependency(gid_a, rid_a, db_path=db_path, global_only=True)
+    out = capsys.readouterr().out
+    assert "not a global" in out
+    assert rid_a not in get_deps(gid_a)  # dep was not saved
+
+    # --global succeeds for two global issues
+    cli.add_dependency(gid_b, gid_a, db_path=db_path, global_only=True)
+    out = capsys.readouterr().out
+    assert "Linked" in out
+
+    # --repo rejects issues not in that repo
+    cli.add_dependency(gid_a, gid_b, db_path=db_path, repo_filter="/myrepo")
+    out = capsys.readouterr().out
+    assert "does not belong to repo" in out
+    assert gid_b not in get_deps(gid_a)  # dep was not saved
+
+    cli.add_dependency(rid_a, gid_b, db_path=db_path, repo_filter="/myrepo")
+    out = capsys.readouterr().out
+    assert "does not belong to repo" in out
+    assert gid_b not in get_deps(rid_a)  # dep was not saved
+
+    # --repo succeeds for two issues in the same repo
+    cli.add_dependency(rid_b, rid_a, db_path=db_path, repo_filter="/myrepo")
+    out = capsys.readouterr().out
+    assert "Linked" in out
+    assert rid_a in get_deps(rid_b)  # dep was saved
