@@ -706,7 +706,7 @@ def add(
     print(f"Created {new_id}: {title} (P{priority})")
 
 
-def add_dependency(child_id, parent_id, db_path=None):
+def add_dependency(child_id, parent_id, db_path=None, repo_filter=None, global_only=False):
     db = load_db(db_path=db_path)
     child = next((i for i in db["issues"] if i["id"] == child_id), None)
     parent = next((i for i in db["issues"] if i["id"] == parent_id), None)
@@ -717,6 +717,21 @@ def add_dependency(child_id, parent_id, db_path=None):
     if not parent:
         print(f"Error: Parent issue {parent_id} not found.")
         return
+
+    if global_only:
+        if child.get("repo") is not None:
+            print(f"Error: {child_id} is not a global (non-repo) issue.")
+            return
+        if parent.get("repo") is not None:
+            print(f"Error: {parent_id} is not a global (non-repo) issue.")
+            return
+    elif repo_filter is not None:
+        if child.get("repo") != repo_filter:
+            print(f"Error: {child_id} does not belong to repo {repo_filter}.")
+            return
+        if parent.get("repo") != repo_filter:
+            print(f"Error: {parent_id} does not belong to repo {repo_filter}.")
+            return
 
     if parent_id not in child["depends_on"]:
         child["depends_on"].append(parent_id)
@@ -1594,9 +1609,15 @@ def main():
     elif cmd == "dep":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 2:
-            print("Usage: sb dep <child_id> <parent_id>")
+            print("Usage: sb dep <child_id> <parent_id> [--repo|--global]")
         else:
-            add_dependency(args[0], args[1], db_path=resolve_db_path())
+            add_dependency(
+                args[0],
+                args[1],
+                db_path=resolve_db_path(),
+                repo_filter=resolve_repo_filter(opts),
+                global_only=opts["global_only"],
+            )
     elif cmd == "show":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
