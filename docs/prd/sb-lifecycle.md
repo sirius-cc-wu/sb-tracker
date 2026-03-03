@@ -95,7 +95,10 @@ Transitions:
 1. `begin`: `Backlog|Ready|Review -> Doing`
 2. `pause`: `Doing -> Ready`
 3. `review`: `Doing -> Review`
-4. `finish`: `Doing|Review -> Done`
+4. `finish`: `Doing -> Review` (when `needs_review=true`) or `Doing|Review -> Done`
+   - When a task has `needs_review=true`, `finish` from `Doing` stops at `Review` and prints a reminder.
+   - A second `finish` from `Review` always closes to `Done` (human has confirmed).
+   - `done <id>` bypasses `needs_review` and force-closes from any state.
 
 Event-to-status default mappings:
 1. `event switch`: target task `-> Doing` (if not `Done`)
@@ -202,6 +205,7 @@ Design rule:
 
 ## 14. Open Questions (for v2)
 
-1. Should `finish` optionally require clean git state?
-2. Should event rules be user-configurable via `meta.lifecycle_rules`?
-3. Should we add per-repo lifecycle policy files for team conventions?
+1. ~~Should `finish` optionally gate on human review?~~ **Resolved:** `needs_review` flag on tasks; `finish` stops at Review when set, closes on second call.
+2. Should `finish` optionally require clean git state?
+3. Should event rules be user-configurable via `meta.lifecycle_rules`?
+4. Should we add per-repo lifecycle policy files for team conventions?

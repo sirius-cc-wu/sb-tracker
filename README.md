@@ -110,15 +110,16 @@ sb done sb-1
 ### Create and Modify
 
 - **`init`**: Initialize the database (defaults to `~/.sb.sqlite`)
-- **`add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID]`**
+- **`add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review]`**
   - Example: `sb add "Setup database" --priority 1 --desc "Configure PostgreSQL" --parent sb-1`
+  - `--needs-review`: marks the task as requiring human sign-off before it can be closed (see `finish`)
 - **`update <id> [field=value ...]`**
-  - Fields: `title`, `desc`, `p` (priority), `status`, `parent`
-  - Example: `sb update sb-1 p=0 desc="New description"`
+  - Fields: `title`, `desc`, `p` (priority), `status`, `parent`, `needs_review` (true|false)
+  - Example: `sb update sb-1 p=0 needs_review=true`
 - **`begin <id> [--force-reopen]`**: Move task to Doing and capture current context
 - **`pause <id>`**: Move task from Doing to Ready
 - **`review <id>`**: Move task from Doing to Review
-- **`finish <id>`**: Move task from Doing/Review to Done
+- **`finish <id>`**: Move task to Done; if task has `needs_review=true`, stops at Review first (run again from Review to close)
 - **`link <id> [branch=...] [worktree=...]`**: Bind task to branch/worktree context
 - **`event <switch|create|merge|remove> [--task <id>]`**: Ingest external lifecycle event
 - **`dep <child_id> <parent_id>`**: Add a blocking dependency
@@ -185,7 +186,7 @@ sb review <id>    # hand off for review
 sb finish <id>    # complete work (Done)
 ```
 
-`sb done <id>` closes a task directly from any state, bypassing the Doing/Review requirement of `finish`.
+`sb done <id>` closes a task directly from any state, bypassing the Doing/Review requirement of `finish` and ignoring `needs_review`.
 
 ### Optional Hook Adapters
 

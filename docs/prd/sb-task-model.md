@@ -35,6 +35,7 @@ Each issue supports:
 2. Optional:
    - `description`, `priority`, `depends_on`, `parent`, `closed_at`
    - `repo`, `repo_commit`, `repo_branch`, `worktree_path`
+   - `needs_review` (boolean, optional) — when `true`, `sb finish` stops at Review for human sign-off
    - `lifecycle` object (event metadata)
    - `events` audit log
 
@@ -61,8 +62,8 @@ Rules:
 ## 7. Mutation Command Requirements
 
 ### 7.1 Core
-1. `add` creates tasks with optional parent/repo context.
-2. `update` updates title/description/priority/status/parent and context fields.
+1. `add` creates tasks with optional parent/repo context and `--needs-review` flag.
+2. `update` updates title/description/priority/status/parent, context fields, and `needs_review=true|false`.
 3. `rm` deletes task by ID.
 
 ### 7.2 Dependency

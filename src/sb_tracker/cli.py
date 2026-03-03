@@ -527,6 +527,7 @@ def update_issue(
     repo_branch=None,
     worktree_path=None,
     repo_force=False,
+    needs_review=None,
     db_path=None,
 ):
     db = load_db(db_path=db_path)
@@ -590,6 +591,16 @@ def update_issue(
         elif current_repo == repo:
             issue["worktree_path"] = worktree_path
             changes["worktree_path"] = "updated"
+
+    if needs_review is not None:
+        if needs_review:
+            if not issue.get("needs_review"):
+                issue["needs_review"] = True
+                changes["needs_review"] = (False, True)
+        else:
+            if issue.get("needs_review"):
+                del issue["needs_review"]
+                changes["needs_review"] = (True, False)
 
     if changes:
         log_event(issue, "updated", {"changes": changes})
@@ -656,6 +667,7 @@ def add(
     repo_commit=None,
     repo_branch=None,
     worktree_path=None,
+    needs_review=False,
     db_path=None,
 ):
     db = load_db(db_path=db_path)
@@ -699,6 +711,8 @@ def add(
         issue["repo_branch"] = repo_branch
     if worktree_path is not None:
         issue["worktree_path"] = worktree_path
+    if needs_review:
+        issue["needs_review"] = True
 
     log_event(issue, "created", {"title": title})
     db["issues"].append(issue)
@@ -780,7 +794,7 @@ def _apply_context_to_issue(issue, context):
     return changed
 
 
-def _lifecycle_target(current_status, action, done_status):
+def _lifecycle_target(current_status, action, done_status, issue=None):
     if action == "begin":
         if current_status == done_status:
             return None
@@ -790,7 +804,13 @@ def _lifecycle_target(current_status, action, done_status):
     if action == "review":
         return "Review" if current_status == "Doing" else None
     if action == "finish":
-        return done_status if current_status in ("Doing", "Review") else None
+        if current_status == "Review":
+            return done_status
+        if current_status == "Doing":
+            if issue and issue.get("needs_review"):
+                return "Review"
+            return done_status
+        return None
     return None
 
 
@@ -822,7 +842,7 @@ def lifecycle_action(issue_id, action, force_reopen=False, db_path=None):
         print(f"No changes for {issue_id}: task is Done (use --force-reopen to resume)")
         return
 
-    target = _lifecycle_target(current_status, action, done_status)
+    target = _lifecycle_target(current_status, action, done_status, issue=issue)
     changed = False
     if target is not None:
         changed = _apply_status_change(issue, target, config)
@@ -836,6 +856,9 @@ def lifecycle_action(issue_id, action, force_reopen=False, db_path=None):
     changed_any = changed or context_changed
     _touch_lifecycle(issue, event_name, started=(action == "begin" and changed_any))
     _persist_lifecycle_outcome(db, issue, issue_id, event_name, changed_any, db_path)
+
+    if action == "finish" and target == "Review":
+        print(f"  ↳ Human sign-off required — run `sb finish {issue_id}` again to close.")
 
 
 def link_issue(issue_id, branch=None, worktree=None, db_path=None):
@@ -1032,8 +1055,9 @@ def list_issues(
             deps = deps[:7] + "..."
         # Indent children
         indent = "  " * i["id"].count(".")
+        nr_tag = " ⚑" if i.get("needs_review") else ""
         print(
-            f"{i['id']:<12} {i.get('priority', 2):<2} {status:<12} {deps:<10} {indent}{i['title']}"
+            f"{i['id']:<12} {i.get('priority', 2):<2} {status:<12} {deps:<10} {indent}{i['title']}{nr_tag}"
         )
 
 
@@ -1201,6 +1225,8 @@ def show_issue(
                 print(f"Status:      {status}")
                 print(f"Created:     {i['created_at']}")
                 print(f"Depends On:  {', '.join(i.get('depends_on', [])) or 'None'}")
+                if i.get("needs_review"):
+                    print("Needs Review: yes")
 
                 dependents = [
                     dep["id"]
@@ -1377,6 +1403,7 @@ def main():
             p = 2
             desc = ""
             parent = None
+            needs_review = False
 
             rest = args[1:]
             named = []
@@ -1394,12 +1421,15 @@ def main():
                 elif rest[i] == "--parent" and i + 1 < len(rest):
                     parent = rest[i + 1]
                     i += 2
+                elif rest[i] == "--needs-review":
+                    needs_review = True
+                    i += 1
                 else:
                     named.append(rest[i])
                     i += 1
             if named:
                 print(f"Unrecognized add arguments: {' '.join(named)}")
-                print("Usage: sb add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID]")
+                print("Usage: sb add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review]")
                 return
 
             repo = None
@@ -1422,6 +1452,7 @@ def main():
                 repo_commit=repo_commit,
                 repo_branch=repo_branch,
                 worktree_path=worktree_path,
+                needs_review=needs_review,
                 db_path=resolve_db_path(),
             )
     elif cmd == "list":
@@ -1490,7 +1521,7 @@ def main():
     elif cmd == "update":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
-            print("Usage: sb update <id> [title=...] [desc=...] [p=...] [status=...] [parent=...]")
+            print("Usage: sb update <id> [title=...] [desc=...] [p=...] [status=...] [parent=...] [needs_review=true|false]")
         else:
             issue_id = args[0]
             kwargs = {}
@@ -1507,6 +1538,8 @@ def main():
                         kwargs["status"] = v
                     elif k == "parent":
                         kwargs["parent_id"] = v
+                    elif k == "needs_review":
+                        kwargs["needs_review"] = v.lower() in ("true", "1", "yes")
             repo = None
             repo_commit = None
             repo_branch = None

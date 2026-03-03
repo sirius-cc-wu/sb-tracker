@@ -61,8 +61,8 @@ Create and update:
 
 ```bash
 sb init
-sb add "Task Title" [--priority/-p N] [--desc/-d TEXT] [--parent ID]
-sb update <id> [title=...] [desc=...] [p=...] [status=...] [parent=...]
+sb add "Task Title" [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review]
+sb update <id> [title=...] [desc=...] [p=...] [status=...] [parent=...] [needs_review=true|false]
 sb begin <id> [--force-reopen]
 sb pause <id>
 sb review <id>
@@ -136,6 +136,12 @@ IDs:
 Completion:
 - Preferred lifecycle: `begin → review → finish` (requires task to be in Doing/Review)
 - `sb done <id>` closes a task directly from any state, bypassing lifecycle validation
+
+`needs_review` flag:
+- Add `--needs-review` to `sb add` (or `sb update <id> needs_review=true`) to mark tasks that require human sign-off before closing.
+- When set, `sb finish` from `Doing` moves to `Review` and prints a reminder instead of closing.
+- A second `sb finish` from `Review` always closes to `Done` (human has confirmed).
+- `sb done` ignores the flag and force-closes from any state.
 
 ## End-of-Session Checklist (Must Do)
 

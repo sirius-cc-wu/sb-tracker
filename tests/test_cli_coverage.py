@@ -485,3 +485,64 @@ def test_add_dependency_scope_validation(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Linked" in out
     assert rid_a in get_deps(rid_b)  # dep was saved
+
+
+def test_needs_review_lifecycle(tmp_path, monkeypatch, capsys):
+    db_path = str(tmp_path / "db.sqlite")
+    monkeypatch.setenv("SB_DB_PATH", db_path)
+    cli.init()
+    capsys.readouterr()
+
+    # Task with needs_review=True
+    cli.add("guarded", "", 1, needs_review=True, db_path=db_path)
+    issue_id = cli.load_db(db_path)["issues"][0]["id"]
+
+    # Move to Doing
+    cli.lifecycle_action(issue_id, "begin", db_path=db_path)
+    capsys.readouterr()
+
+    # finish from Doing → should stop at Review, not Done
+    cli.lifecycle_action(issue_id, "finish", db_path=db_path)
+    out = capsys.readouterr().out
+    status = cli.load_db(db_path)["issues"][0]["status"]
+    assert status == "Review"
+    assert "sign-off" in out or "Review" in out
+
+    # finish from Review → should close (Done)
+    cli.lifecycle_action(issue_id, "finish", db_path=db_path)
+    capsys.readouterr()
+    status = cli.load_db(db_path)["issues"][0]["status"]
+    assert status == "Done"
+
+    # Task without needs_review — finish from Doing goes directly to Done
+    cli.add("free", "", 1, needs_review=False, db_path=db_path)
+    free_id = next(i["id"] for i in cli.load_db(db_path)["issues"] if i["title"] == "free")
+    cli.lifecycle_action(free_id, "begin", db_path=db_path)
+    capsys.readouterr()
+    cli.lifecycle_action(free_id, "finish", db_path=db_path)
+    capsys.readouterr()
+    free_status = next(i["status"] for i in cli.load_db(db_path)["issues"] if i["id"] == free_id)
+    assert free_status == "Done"
+
+    # sb done bypasses needs_review flag
+    cli.add("force-close", "", 1, needs_review=True, db_path=db_path)
+    fc_id = next(i["id"] for i in cli.load_db(db_path)["issues"] if i["title"] == "force-close")
+    cli.lifecycle_action(fc_id, "begin", db_path=db_path)
+    cli.set_status(fc_id, None, db_path=db_path)  # done bypasses flag
+    capsys.readouterr()
+    fc_status = next(i["status"] for i in cli.load_db(db_path)["issues"] if i["id"] == fc_id)
+    assert fc_status == "Done"
+
+    # update_issue can toggle needs_review
+    cli.add("toggleable", "", 1, db_path=db_path)
+    tg_id = next(i["id"] for i in cli.load_db(db_path)["issues"] if i["title"] == "toggleable")
+    tg = next(i for i in cli.load_db(db_path)["issues"] if i["id"] == tg_id)
+    assert not tg.get("needs_review")  # default off
+    cli.update_issue(tg_id, needs_review=True, db_path=db_path)
+    capsys.readouterr()
+    tg = next(i for i in cli.load_db(db_path)["issues"] if i["id"] == tg_id)
+    assert tg.get("needs_review") is True
+    cli.update_issue(tg_id, needs_review=False, db_path=db_path)
+    capsys.readouterr()
+    tg = next(i for i in cli.load_db(db_path)["issues"] if i["id"] == tg_id)
+    assert not tg.get("needs_review")
