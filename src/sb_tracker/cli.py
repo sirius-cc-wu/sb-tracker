@@ -12,11 +12,12 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DEFAULT_DB_PATH = "~/.sb.sqlite"
 LEGACY_JSON_DB_PATH = "~/.sb.json"
 VALID_EVENT_TYPES = {"switch", "create", "merge", "remove"}
+COMPACT_RETENTION_DAYS = 90
 
 
 def _default_db_state():
@@ -1185,17 +1186,36 @@ def show_stats(db_path=None):
 
 def compact(db_path=None):
     db = load_db(db_path=db_path)
-    closed_issues = [i for i in db["issues"] if is_issue_done(i, db)]
+    cutoff_naive = datetime.now() - timedelta(days=COMPACT_RETENTION_DAYS)
+    compactable_ids = set()
 
-    if not closed_issues:
-        print("No done issues to compact.")
+    for issue in db["issues"]:
+        if not is_issue_done(issue, db):
+            continue
+        closed_at = issue.get("closed_at")
+        if not isinstance(closed_at, str):
+            continue
+        normalized = closed_at.replace("Z", "+00:00")
+        try:
+            closed_dt = datetime.fromisoformat(normalized)
+        except ValueError:
+            continue
+        if closed_dt.tzinfo is None:
+            if closed_dt <= cutoff_naive:
+                compactable_ids.add(issue["id"])
+            continue
+        cutoff_aware = datetime.now(closed_dt.tzinfo) - timedelta(days=COMPACT_RETENTION_DAYS)
+        if closed_dt <= cutoff_aware:
+            compactable_ids.add(issue["id"])
+
+    if not compactable_ids:
+        print(f"No done issues older than {COMPACT_RETENTION_DAYS} days to compact.")
         return
 
-    # Remove done issues
-    db["issues"] = [i for i in db["issues"] if not is_issue_done(i, db)]
+    db["issues"] = [i for i in db["issues"] if i.get("id") not in compactable_ids]
 
     save_db(db, db_path=db_path)
-    print(f"Successfully removed {len(closed_issues)} done issues.")
+    print(f"Successfully removed {len(compactable_ids)} done issues.")
 
 
 def set_status(issue_id, status, db_path=None):
@@ -1299,7 +1319,7 @@ def print_help():
     print("  search <keyword> [--json] Search titles and descriptions")
     print("  board [--json]            Show issues grouped into Kanban columns")
     print("  stats                     Show task statistics")
-    print("  compact                   Remove done issues")
+    print(f"  compact                   Remove done issues older than {COMPACT_RETENTION_DAYS} days")
     print("  dep <child> <parent>      Add dependency")
     print("  update <id> [field=val]   Update title, desc, p, status, parent")
     print("  begin <id> [--force-reopen]   Move task to Doing and capture context")

@@ -3,7 +3,7 @@
 ## Document Metadata
 - Status: Draft (implementation-aligned)
 - Owner: sb-tracker
-- Last Updated: 2026-02-28
+- Last Updated: 2026-03-06
 - Target: task model, status model, and mutation commands
 
 ## 1. Problem Statement
@@ -93,6 +93,13 @@ Rules:
 1. `event` ingests external events (`switch|create|merge|remove`).
 2. `link` manually binds branch/worktree context for matching.
 
+### 7.6 Maintenance
+1. `compact` removes only tasks that are both:
+   - in done state, and
+   - at least 90 days old based on `closed_at`.
+2. Done tasks without a valid `closed_at` timestamp must not be removed by `compact`.
+3. If no tasks meet the retention threshold, `compact` performs no deletions.
+
 ## 8. Readiness Model
 
 `ready` must include only tasks where:
@@ -115,6 +122,7 @@ Event types include:
 3. Status normalization and done/closed timestamp behavior.
 4. Lifecycle transition correctness and force-reopen path.
 5. Event/link mutation and idempotent no-op behavior.
+6. `compact` retention behavior (remove only done tasks older than 90 days).
 
 Primary tests:
 - `sb-tracker/tests/test_cli_coverage.py`
@@ -124,3 +132,4 @@ Primary tests:
 1. Tasks can be created, linked, progressed, and completed fully via CLI.
 2. Status/readiness behavior is deterministic and auditable.
 3. Lifecycle and classic status commands coexist without breaking older workflows.
+4. Compaction preserves recent done tasks and only purges done tasks older than 90 days.

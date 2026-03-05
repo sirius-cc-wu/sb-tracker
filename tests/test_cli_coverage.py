@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -313,6 +314,45 @@ def test_main_command_dispatch(tmp_path, monkeypatch, capsys):
     _run_main(monkeypatch, capsys, db_path, ["search", "rename", "--worktree", str(tmp_path)])
     _run_main(monkeypatch, capsys, db_path, ["board", "--worktree", str(tmp_path)])
 
+
+def test_compact_only_removes_done_issues_older_than_90_days(tmp_path, monkeypatch, capsys):
+    db_path = tmp_path / "compact-retention.sqlite"
+    monkeypatch.setenv("SB_DB_PATH", str(db_path))
+    cli.init()
+    db = cli.load_db(str(db_path))
+    db["issues"] = [
+        _issue("sb-old", status="Done"),
+        _issue("sb-recent", status="Done"),
+        _issue("sb-missing-closed-at", status="Done"),
+        _issue("sb-open", status="Backlog"),
+    ]
+    db["issues"][0]["closed_at"] = (datetime.now() - timedelta(days=91)).isoformat()
+    db["issues"][1]["closed_at"] = (datetime.now() - timedelta(days=10)).isoformat()
+    cli.save_db(db, str(db_path))
+
+    cli.compact(db_path=str(db_path))
+    out = capsys.readouterr().out
+    assert "Successfully removed 1 done issues." in out
+
+    remaining_ids = {issue["id"] for issue in cli.load_db(str(db_path))["issues"]}
+    assert "sb-old" not in remaining_ids
+    assert "sb-recent" in remaining_ids
+    assert "sb-missing-closed-at" in remaining_ids
+    assert "sb-open" in remaining_ids
+
+
+def test_compact_no_eligible_done_issues_prints_retention_message(tmp_path, monkeypatch, capsys):
+    db_path = tmp_path / "compact-noop.sqlite"
+    monkeypatch.setenv("SB_DB_PATH", str(db_path))
+    cli.init()
+    db = cli.load_db(str(db_path))
+    db["issues"] = [_issue("sb-recent", status="Done")]
+    db["issues"][0]["closed_at"] = (datetime.now() - timedelta(days=5)).isoformat()
+    cli.save_db(db, str(db_path))
+
+    cli.compact(db_path=str(db_path))
+    out = capsys.readouterr().out
+    assert "No done issues older than 90 days to compact." in out
 
 def test_additional_branches(tmp_path, monkeypatch, capsys):
     malformed_shape = cli._ensure_db_shape({"issues": "bad", "meta": {"kanban": {"columns": "bad", "backlog": 1, "done": 2}}})
