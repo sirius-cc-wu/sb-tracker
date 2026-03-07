@@ -35,7 +35,7 @@ The lifecycle PRD (`sb-lifecycle.md`) required a decision-complete execution pla
 - Add `begin`, `pause`, `review`, `finish` command handlers.
 - Implement transition rules and idempotent no-op behavior.
 - Add lifecycle audit events.
-- Preserve `done` behavior.
+- Preserve close-command behavior.
 
 Primary files:
 - `sb-tracker/src/sb_tracker/cli.py`

@@ -82,7 +82,7 @@ Rules:
 
 ### 7.3 Status
 1. `status <id> <state>` sets explicit status.
-2. `done <id>` moves task to repo-configured done state.
+2. `close <id>` moves task to repo-configured done state.
 
 ### 7.4 Lifecycle
 1. `begin`, `pause`, `review`, `finish` provide explicit feature progression.

@@ -51,7 +51,7 @@ DB behavior:
    ```
 5. **Close session cleanly**
    - Verify work (tests/screenshots as applicable)
-   - Complete tasks with `sb finish <id>` or `sb done <id>`
+   - Complete tasks with `sb finish <id>` or `sb close <id>`
    - Run `sb list --all`
    - Share completed work and the next task
 
@@ -70,7 +70,7 @@ sb begin <id> [--force-reopen]
 sb pause <id>
 sb review <id>
 sb finish <id>
-sb done <id>
+sb close <id>
 ```
 
 List and inspect:
@@ -140,19 +140,19 @@ IDs:
 
 Completion:
 - Preferred lifecycle: `begin → review → finish` (requires task to be in Doing/Review)
-- `sb done <id>` closes a task directly from any state, bypassing lifecycle validation
+- `sb close <id>` closes a task directly from any state, bypassing lifecycle validation
 
 `needs_review` flag:
 - Add `--needs-review` to `sb add` (or `sb update <id> needs_review=true`) to mark tasks that require human sign-off before closing.
 - When set, `sb finish` from `Doing` moves to `Review` and prints a reminder instead of closing.
 - A second `sb finish` from `Review` always closes to `Done` (human has confirmed).
-- `sb done` ignores the flag and force-closes from any state.
+- `sb close` ignores the flag and force-closes from any state.
 
 ## End-of-Session Checklist (Must Do)
 
 1. File follow-up work as explicit tasks/subtasks.
 2. Verify implementation (tests/screenshots as applicable).
-3. Move task status out of ambiguous states; complete done work (`finish` or `done`).
+3. Move task status out of ambiguous states; complete done work (`finish` or `close`).
 4. Optionally run `sb compact` to prune done items.
 5. Commit code changes (use the `commit` skill if available, otherwise `git add -A && git commit -m "..."`).
 6. Run `sb list --all` and confirm task state clarity.

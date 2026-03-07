@@ -1330,7 +1330,7 @@ def print_help():
     print("  link <id> [branch=...] [worktree=...]   Link task to context")
     print("  promote <id>              Export task as Markdown")
     print("  show <id> [--json]        Show issue details")
-    print("  done <id>                 Close/archive issue (marks task complete from any state)")
+    print("  close <id>                Close/archive issue (marks task complete from any state)")
     print("  rm <id>                   Delete issue")
     print("  config prefix <PREFIX>    Set ID prefix for current repo (e.g. BNC)")
     print("  config prefix <PREFIX> --global  Set global default ID prefix")
@@ -1715,10 +1715,10 @@ def main():
                 global_only=opts["global_only"],
                 db_path=resolve_db_path(),
             )
-    elif cmd == "done":
+    elif cmd == "close":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
-            print("Usage: sb done <id>")
+            print("Usage: sb close <id>")
         else:
             set_status(args[0], None, db_path=resolve_db_path())
     elif cmd == "rm":

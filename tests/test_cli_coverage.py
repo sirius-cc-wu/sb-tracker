@@ -277,7 +277,8 @@ def test_main_command_dispatch(tmp_path, monkeypatch, capsys):
         (["promote"], "Usage: sb promote"),
         (["dep", "x"], "Usage: sb dep"),
         (["show"], "Usage: sb show"),
-        (["done"], "Usage: sb done"),
+        (["close"], "Usage: sb close"),
+        (["done"], "Unknown command"),
         (["rm"], "Usage: sb rm"),
         (["unknown"], "Unknown command"),
     ]:
@@ -304,7 +305,7 @@ def test_main_command_dispatch(tmp_path, monkeypatch, capsys):
     _run_main(monkeypatch, capsys, db_path, ["board", "--json", "--branch", "feature-main"])
     _run_main(monkeypatch, capsys, db_path, ["show", issue_id, "--json"])
     _run_main(monkeypatch, capsys, db_path, ["stats"])
-    _run_main(monkeypatch, capsys, db_path, ["done", issue_id])
+    _run_main(monkeypatch, capsys, db_path, ["close", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["compact"])
     _run_main(monkeypatch, capsys, db_path, ["rm", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["list", "--repo", "--json"])
@@ -564,11 +565,11 @@ def test_needs_review_lifecycle(tmp_path, monkeypatch, capsys):
     free_status = next(i["status"] for i in cli.load_db(db_path)["issues"] if i["id"] == free_id)
     assert free_status == "Done"
 
-    # sb done bypasses needs_review flag
+    # sb close bypasses needs_review flag
     cli.add("force-close", "", 1, needs_review=True, db_path=db_path)
     fc_id = next(i["id"] for i in cli.load_db(db_path)["issues"] if i["title"] == "force-close")
     cli.lifecycle_action(fc_id, "begin", db_path=db_path)
-    cli.set_status(fc_id, None, db_path=db_path)  # done bypasses flag
+    cli.set_status(fc_id, None, db_path=db_path)  # close bypasses flag
     capsys.readouterr()
     fc_status = next(i["status"] for i in cli.load_db(db_path)["issues"] if i["id"] == fc_id)
     assert fc_status == "Done"

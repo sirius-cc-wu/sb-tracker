@@ -21,7 +21,7 @@ We need a lightweight lifecycle model that:
 1. Add first-class lifecycle commands to `sb` for explicit, low-friction status transitions.
 2. Add an optional event ingestion interface for external hook adapters.
 3. Improve task-context linkage using repo/branch/worktree metadata.
-4. Keep backward compatibility with existing `sb` flows (`status`, `done`, `update`, `list`).
+4. Keep backward compatibility with existing `sb` flows (`status`, `close`, `update`, `list`).
 
 ## 3. Non-Goals
 
@@ -55,7 +55,7 @@ Add commands:
 Rules:
 - No-op transitions must be safe and idempotent.
 - Lifecycle commands must append audit events.
-- Existing `sb done <id>` remains valid and unchanged.
+- `sb close <id>` is the direct close command from any state.
 
 ### 5.2 External Event Ingestion
 Add command:
@@ -98,7 +98,7 @@ Transitions:
 4. `finish`: `Doing -> Review` (when `needs_review=true`) or `Doing|Review -> Done`
    - When a task has `needs_review=true`, `finish` from `Doing` stops at `Review` and prints a reminder.
    - A second `finish` from `Review` always closes to `Done` (human has confirmed).
-   - `done <id>` bypasses `needs_review` and force-closes from any state.
+   - `close <id>` bypasses `needs_review` and force-closes from any state.
 
 Event-to-status default mappings:
 1. `event switch`: target task `-> Doing` (if not `Done`)
@@ -174,7 +174,7 @@ Design rule:
 4. `sb link` updates metadata and emits audit event.
 
 ### 10.3 Regression Tests
-1. Existing command behaviors unchanged (`done`, `status`, `update`, `list --repo`, `--worktree`).
+1. Existing command behaviors unchanged (`close`, `status`, `update`, `list --repo`, `--worktree`).
 2. Existing JSON and human output formats remain backward compatible.
 
 ## 11. Acceptance Criteria
@@ -188,7 +188,7 @@ Design rule:
 ## 12. Rollout Plan
 
 1. Ship as additive minor release.
-2. Keep `sb done` as supported legacy path.
+2. Use `sb close` as the direct close command.
 3. Update `README.md`, `AGENTS.md`, and skill docs with recommended lifecycle flow.
 4. Add a short migration note: no migration required; new fields are optional.
 

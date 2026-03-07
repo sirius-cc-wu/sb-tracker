@@ -30,7 +30,7 @@ sb --help
 - **List Tasks**: `sb list` (open) or `sb list --all`
 - **Repo Filter**: `sb list --repo` (current repo) or `sb list --global` (non-repo tasks)
 - **JSON Output**: Append `--json` to `list` or `show` for machine-readable data.
-- **Complete Task**: `sb done sb-1`
+- **Complete Task**: `sb close sb-1`
 - **Override DB Path**: Set `SB_DB_PATH=/path/to/db.sqlite`
 
 ## Workflow
@@ -88,7 +88,7 @@ To maintain perfect context across sessions, agents should follow this loop:
 1. **Onboarding**: At the start of a task, run `sb list --json` or `sb ready` to understand the current state.
 2. **Execution**: Focus on the highest priority `ready` tasks.
 3. **Verification**: Run project tests or take a screenshot to confirm the work is complete.
-4. **Updating**: Use lifecycle commands while working: `sb begin`, `sb review`, `sb finish` (or `sb done`).
+4. **Updating**: Use lifecycle commands while working: `sb begin`, `sb review`, `sb finish` (or `sb close`).
 5. **Clean up**: Run `sb compact` to remove closed tasks before committing.
 6. **Commit**: Commit code changes. Only commit `.sb.json` when using `--local` mode.
 7. **Handoff**: Before ending a session, run `sb list --all` and provide a short summary of what was completed and what remains.
@@ -99,7 +99,7 @@ To maintain perfect context across sessions, agents should follow this loop:
 
 1. **File remaining work** - Create issues for any follow-up tasks
 2. **Verify** - Run project tests or take a screenshot to confirm the work is complete
-3. **Update task status** - Mark completed work as done with `sb done <id>`
+3. **Update task status** - Mark completed work as closed with `sb close <id>`
 4. **Clean up** - Run `sb compact` if you want to remove closed tasks
 5. **Commit local changes** - Commit code changes. Only commit `.sb.json` when using `--local` mode. If a `commit` skill is available in the agent environment, use it. Otherwise run:
    ```bash
@@ -125,7 +125,7 @@ To maintain perfect context across sessions, agents should follow this loop:
   - `post-merge`: `sb event merge --repo --branch`
 
 ### Close Issue
-`sb done <id>`
+`sb close <id>`
 - Moves status to "closed" and sets `closed_at` timestamp.
 
 ### Delete Issue

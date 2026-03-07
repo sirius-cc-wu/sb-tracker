@@ -91,7 +91,7 @@ sb list --global     # Show tasks not tied to any repo
 Complete a task:
 
 ```bash
-sb done sb-1
+sb close sb-1
 ```
 
 ## Commands
@@ -140,7 +140,7 @@ sb done sb-1
 - **`promote <id>`**: Optional Markdown summary of task and sub-tasks
 - **`stats`**: Overview of progress and priority breakdown
 - **`compact`**: Archive done tasks to save space
-- **`done <id>`**: Close task from any state (skips Kanban lifecycle validation)
+- **`close <id>`**: Close task from any state (skips Kanban lifecycle validation)
 - **`rm <id>`**: Permanently delete task
 - **`config prefix <PREFIX>`**: Set ID prefix for current repo (e.g. `sb config prefix BNC`)
 - **`config prefix <PREFIX> --global`**: Set global default prefix
@@ -190,7 +190,7 @@ sb review <id>    # hand off for review
 sb finish <id>    # complete work (Done)
 ```
 
-`sb done <id>` closes a task directly from any state, bypassing the Doing/Review requirement of `finish` and ignoring `needs_review`.
+`sb close <id>` closes a task directly from any state, bypassing the Doing/Review requirement of `finish` and ignoring `needs_review`.
 
 ### Optional Hook Adapters
 
@@ -313,16 +313,16 @@ Linked sb-b9d2c1 -> depends on -> sb-a3f8e9
 $ sb ready
 No issues found matching criteria.
 
-$ sb done sb-a3f8e9.1
+$ sb close sb-a3f8e9.1
 Updated sb-a3f8e9.1 status to Done
 
-$ sb done sb-a3f8e9.2
+$ sb close sb-a3f8e9.2
 Updated sb-a3f8e9.2 status to Done
 
-$ sb done sb-a3f8e9.3
+$ sb close sb-a3f8e9.3
 Updated sb-a3f8e9.3 status to Done
 
-$ sb done sb-a3f8e9
+$ sb close sb-a3f8e9
 Updated sb-a3f8e9 status to Done
 
 $ sb ready
