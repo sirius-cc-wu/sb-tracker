@@ -90,7 +90,7 @@ To maintain perfect context across sessions, agents should follow this loop:
 3. **Verification**: Run project tests or take a screenshot to confirm the work is complete.
 4. **Updating**: Use lifecycle commands while working: `sb begin`, `sb review`, `sb finish` (or `sb close`).
 5. **Clean up**: Run `sb compact` to remove closed tasks before committing.
-6. **Commit**: Commit code changes. Only commit `.sb.json` when using `--local` mode.
+6. **Commit**: Commit code changes.
 7. **Handoff**: Before ending a session, run `sb list --all` and provide a short summary of what was completed and what remains.
 
 ## Landing the Plane (Session Completion)
@@ -101,7 +101,7 @@ To maintain perfect context across sessions, agents should follow this loop:
 2. **Verify** - Run project tests or take a screenshot to confirm the work is complete
 3. **Update task status** - Mark completed work as closed with `sb close <id>`
 4. **Clean up** - Run `sb compact` if you want to remove closed tasks
-5. **Commit local changes** - Commit code changes. Only commit `.sb.json` when using `--local` mode. If a `commit` skill is available in the agent environment, use it. Otherwise run:
+5. **Commit local changes** - Commit code changes. If a `commit` skill is available in the agent environment, use it. Otherwise run:
    ```bash
    git add -A
    git commit -m "type(scope): description of change"

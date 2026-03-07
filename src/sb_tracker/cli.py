@@ -8,10 +8,8 @@ import json
 import os
 import sys
 import hashlib
-import shutil
 import sqlite3
 import subprocess
-import tempfile
 from datetime import datetime, timedelta
 
 DEFAULT_DB_PATH = "~/.sb.sqlite"
@@ -34,19 +32,33 @@ def _default_db_state():
     )
 
 
-def _is_json_db_path(db_path):
-    return os.path.splitext(db_path)[1].lower() == ".json"
-
-
-def resolve_legacy_json_db_path():
-    return os.path.expanduser(LEGACY_JSON_DB_PATH)
-
-
 def resolve_db_path():
     env_path = os.environ.get("SB_DB_PATH")
     if env_path:
         return os.path.expanduser(env_path)
     return os.path.expanduser(DEFAULT_DB_PATH)
+
+
+def _validate_sqlite_db_path(db_path):
+    if os.path.splitext(db_path)[1].lower() == ".json":
+        print(
+            "Error: JSON database paths are no longer supported. Use a .sqlite path for SB_DB_PATH.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
+def _fail_if_legacy_json_exists(db_path):
+    if db_path != os.path.expanduser(DEFAULT_DB_PATH):
+        return
+    legacy_path = os.path.expanduser(LEGACY_JSON_DB_PATH)
+    if os.path.exists(legacy_path):
+        print(
+            f"Error: Legacy JSON database '{legacy_path}' is no longer supported. "
+            "Please migrate it manually to ~/.sb.sqlite and remove the JSON file.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 
 def _run_git(args, cwd=None):
@@ -284,45 +296,6 @@ def _next_top_level_id(db, title, description, created_at, repo=None):
     return _next_hash_id(db["issues"], title, description, created_at, prefix=prefix)
 
 
-def _load_db_from_json(db_path):
-    if not os.path.exists(db_path):
-        return _default_db_state()
-    try:
-        with open(db_path, "r") as f:
-            return _ensure_db_shape(json.load(f))
-    except json.JSONDecodeError as exc:
-        print(
-            f"Error: Failed to parse database file '{db_path}': {exc}",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-    except OSError as exc:
-        print(f"Error: Unable to read database file '{db_path}': {exc}", file=sys.stderr)
-        raise SystemExit(1)
-
-
-def _save_db_to_json(db, db_path):
-    db = dict(_ensure_db_shape(db))
-    db.pop("_storage_revision", None)
-
-    dir_name = os.path.dirname(db_path) or "."
-    os.makedirs(dir_name, exist_ok=True)
-    fd, temp_path = tempfile.mkstemp(prefix=".sb-json-", suffix=".tmp", dir=dir_name)
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(db, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, db_path)
-    except OSError as exc:
-        try:
-            os.unlink(temp_path)
-        except OSError:
-            pass
-        print(f"Error: Unable to write database file '{db_path}': {exc}", file=sys.stderr)
-        raise SystemExit(1)
-
-
 def _connect_sqlite(db_path):
     dir_name = os.path.dirname(db_path) or "."
     os.makedirs(dir_name, exist_ok=True)
@@ -441,45 +414,17 @@ def _save_db_to_sqlite(db, db_path):
         conn.close()
 
 
-def _migrate_legacy_json_to_sqlite_if_needed(db_path):
-    default_db_path = os.path.expanduser(DEFAULT_DB_PATH)
-    if db_path != default_db_path or os.path.exists(db_path):
-        return
-    legacy_path = resolve_legacy_json_db_path()
-    if not os.path.exists(legacy_path):
-        return
-
-    legacy_db = _load_db_from_json(legacy_path)
-    backup_path = f"{legacy_path}.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    try:
-        shutil.copy2(legacy_path, backup_path)
-    except OSError as exc:
-        print(
-            f"Error: Failed to create backup '{backup_path}' before migration: {exc}",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-
-    _save_db_to_sqlite(legacy_db, db_path)
-    print(
-        f"Migrated legacy database from '{legacy_path}' to '{db_path}' (backup: '{backup_path}').",
-        file=sys.stderr,
-    )
-
-
 def load_db(db_path=None):
     db_path = db_path or resolve_db_path()
-    if _is_json_db_path(db_path):
-        return _load_db_from_json(db_path)
-    _migrate_legacy_json_to_sqlite_if_needed(db_path)
+    _validate_sqlite_db_path(db_path)
+    _fail_if_legacy_json_exists(db_path)
     return _load_db_from_sqlite(db_path)
 
 
 def save_db(db, db_path=None):
     db_path = db_path or resolve_db_path()
-    if _is_json_db_path(db_path):
-        _save_db_to_json(db, db_path)
-        return
+    _validate_sqlite_db_path(db_path)
+    _fail_if_legacy_json_exists(db_path)
     _save_db_to_sqlite(db, db_path)
 
 

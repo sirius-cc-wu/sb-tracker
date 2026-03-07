@@ -93,21 +93,9 @@ def test_core_helper_paths(capsys):
     assert cli._lifecycle_target("Done", "begin", "Done") is None
 
 
-def test_json_and_sqlite_error_paths(tmp_path, monkeypatch):
-    json_path = tmp_path / "data.json"
-    cli._save_db_to_json(cli._default_db_state(), str(json_path))
-    loaded = cli._load_db_from_json(str(json_path))
-    assert loaded["issues"] == []
-
-    broken = tmp_path / "broken.json"
-    broken.write_text('{"issues":[{"id":"x",}]}', encoding="utf-8")
+def test_storage_error_paths(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
-        cli._load_db_from_json(str(broken))
-    assert exc.value.code == 1
-
-    monkeypatch.setattr(cli.os, "replace", lambda *_a, **_k: (_ for _ in ()).throw(OSError("replace failed")))
-    with pytest.raises(SystemExit) as exc:
-        cli._save_db_to_json(cli._default_db_state(), str(tmp_path / "will_fail.json"))
+        cli.load_db(str(tmp_path / "data.json"))
     assert exc.value.code == 1
 
     with pytest.raises(SystemExit) as exc:
@@ -135,23 +123,13 @@ def test_json_and_sqlite_error_paths(tmp_path, monkeypatch):
     assert exc.value.code == 1
 
 
-def test_legacy_migration_failure_and_skip(tmp_path, monkeypatch):
+def test_legacy_json_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     legacy = tmp_path / ".sb.json"
-    legacy.write_text(json.dumps(cli._default_db_state()), encoding="utf-8")
+    legacy.write_text("{}", encoding="utf-8")
 
-    custom_path = tmp_path / "custom.sqlite"
-    cli._migrate_legacy_json_to_sqlite_if_needed(str(custom_path))
-    assert not custom_path.exists()
-
-    default_path = tmp_path / ".sb.sqlite"
-    monkeypatch.setattr(
-        cli.shutil,
-        "copy2",
-        lambda *_a, **_k: (_ for _ in ()).throw(OSError("backup failed")),
-    )
     with pytest.raises(SystemExit) as exc:
-        cli._migrate_legacy_json_to_sqlite_if_needed(str(default_path))
+        cli.load_db()
     assert exc.value.code == 1
 
 
@@ -366,10 +344,6 @@ def test_additional_branches(tmp_path, monkeypatch, capsys):
         cli._next_hash_id(existing, "t", "d", "x")
 
     monkeypatch.undo()
-    legacyless_home = tmp_path / "home-no-legacy"
-    legacyless_home.mkdir()
-    monkeypatch.setenv("HOME", str(legacyless_home))
-    cli._migrate_legacy_json_to_sqlite_if_needed(str(legacyless_home / ".sb.sqlite"))
 
     db_path = tmp_path / "branch.sqlite"
     monkeypatch.setenv("SB_DB_PATH", str(db_path))
@@ -446,23 +420,9 @@ def test_additional_branches(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit):
         cli._save_db_to_sqlite(cli._default_db_state(), str(tmp_path / "sqlite-fail.sqlite"))
 
-    import builtins
-
-    monkeypatch.setattr(
-        builtins,
-        "open",
-        lambda *_a, **_k: (_ for _ in ()).throw(OSError("open fail")),
-    )
-    existing_json = tmp_path / "existing.json"
-    existing_json.write_text("{}", encoding="utf-8")
-    with pytest.raises(SystemExit):
-        cli._load_db_from_json(str(existing_json))
-
     monkeypatch.undo()
-    monkeypatch.setattr(cli.os, "replace", lambda *_a, **_k: (_ for _ in ()).throw(OSError("replace fail")))
-    monkeypatch.setattr(cli.os, "unlink", lambda *_a, **_k: (_ for _ in ()).throw(OSError("unlink fail")))
     with pytest.raises(SystemExit):
-        cli._save_db_to_json(cli._default_db_state(), str(tmp_path / "json-fail.json"))
+        cli.load_db(str(tmp_path / "json-fail.json"))
 
     non_git_path = tmp_path / "not-repo"
     non_git_path.mkdir()

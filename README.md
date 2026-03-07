@@ -20,6 +20,12 @@ A lightweight, standalone task tracker that stores state in a local SQLite datab
 - **JSON Export**: Machine-readable output for integration
 - **Compaction**: Archive done tasks to keep context efficient
 
+## Breaking Change (v0.4.0)
+
+- Storage is now SQLite-only.
+- `.sb.json` is no longer supported and is not auto-migrated.
+- `SB_DB_PATH` must point to a SQLite path (for example, `~/.sb.sqlite`).
+
 ## Installation
 
 ### Recommended (pipx)
@@ -105,7 +111,7 @@ sb close sb-1
 ### Environment
 
 - **`SB_DB_PATH`**: Override the default DB path (otherwise `~/.sb.sqlite`)
-- On first run, `sb` will automatically migrate legacy `~/.sb.json` data into `~/.sb.sqlite` and create a timestamped backup of the original JSON file.
+- Paths ending in `.json` are rejected (SQLite-only storage backend).
 
 ### Create and Modify
 

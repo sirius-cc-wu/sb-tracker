@@ -22,7 +22,7 @@ sb --help
 DB behavior:
 - Default DB: `~/.sb.sqlite`
 - Override path: `SB_DB_PATH=/path/to/db.sqlite`
-- Legacy `~/.sb.json` is auto-migrated on first run
+- Paths ending in `.json` are not supported
 
 ## Operational Loop (Required)
 
