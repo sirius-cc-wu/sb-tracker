@@ -306,31 +306,399 @@ def _connect_sqlite(db_path):
     return conn
 
 
-def _ensure_sqlite_storage(conn):
+def _table_exists(conn, table_name):
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _is_v2_schema(conn):
+    return (
+        _table_exists(conn, "schema_info")
+        and _table_exists(conn, "meta")
+        and _table_exists(conn, "issues")
+        and _table_exists(conn, "issue_dependencies")
+        and _table_exists(conn, "issue_events")
+    )
+
+
+def _has_legacy_blob_storage(conn):
+    if not _table_exists(conn, "storage"):
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM storage WHERE key = 'db_json'"
+    ).fetchone()
+    return row is not None
+
+
+def _create_v2_schema(conn):
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS storage (
+        CREATE TABLE IF NOT EXISTS schema_info (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         )
         """
     )
-    state_row = conn.execute(
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS issues (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            priority INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            closed_at TEXT,
+            parent TEXT,
+            repo TEXT,
+            repo_commit TEXT,
+            repo_branch TEXT,
+            worktree_path TEXT,
+            needs_review INTEGER NOT NULL DEFAULT 0,
+            lifecycle_started_at TEXT,
+            lifecycle_last_event_type TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS issue_dependencies (
+            child_id TEXT NOT NULL,
+            parent_id TEXT NOT NULL,
+            PRIMARY KEY (child_id, parent_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS issue_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            issue_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            payload_json TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_issue_events_issue_id
+        ON issue_events(issue_id, id)
+        """
+    )
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO schema_info (key, value)
+        VALUES ('version', '2')
+        """
+    )
+
+
+def _upsert_meta(conn, key, value):
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        (key, value),
+    )
+
+
+def _delete_meta(conn, key):
+    conn.execute("DELETE FROM meta WHERE key = ?", (key,))
+
+
+def _serialize_event_payload(event):
+    payload = {k: v for k, v in event.items() if k not in ("type", "timestamp")}
+    if not payload:
+        return None
+    return json.dumps(payload, sort_keys=True)
+
+
+def _write_v2_state(conn, db, revision):
+    payload_db = dict(_ensure_db_shape(db))
+    payload_db.pop("_storage_revision", None)
+
+    conn.execute("DELETE FROM issue_events")
+    conn.execute("DELETE FROM issue_dependencies")
+    conn.execute("DELETE FROM issues")
+
+    for issue in payload_db.get("issues", []):
+        lifecycle = issue.get("lifecycle") or {}
+        conn.execute(
+            """
+            INSERT INTO issues (
+                id, title, description, priority, status, created_at, closed_at,
+                parent, repo, repo_commit, repo_branch, worktree_path,
+                needs_review, lifecycle_started_at, lifecycle_last_event_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                issue["id"],
+                issue["title"],
+                issue.get("description", ""),
+                issue.get("priority", 2),
+                issue.get("status", "Backlog"),
+                issue.get("created_at", datetime.now().isoformat()),
+                issue.get("closed_at"),
+                issue.get("parent"),
+                issue.get("repo"),
+                issue.get("repo_commit"),
+                issue.get("repo_branch"),
+                issue.get("worktree_path"),
+                1 if issue.get("needs_review") else 0,
+                lifecycle.get("started_at"),
+                lifecycle.get("last_event_type"),
+            ),
+        )
+        for dep in issue.get("depends_on", []):
+            conn.execute(
+                "INSERT OR IGNORE INTO issue_dependencies (child_id, parent_id) VALUES (?, ?)",
+                (issue["id"], dep),
+            )
+        for event in issue.get("events", []):
+            conn.execute(
+                """
+                INSERT INTO issue_events (issue_id, type, timestamp, payload_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    issue["id"],
+                    event.get("type", "unknown"),
+                    event.get("timestamp", datetime.now().isoformat()),
+                    _serialize_event_payload(event),
+                ),
+            )
+
+    _upsert_meta(conn, "db_meta_json", json.dumps(payload_db.get("meta", {}), sort_keys=True))
+    _upsert_meta(conn, "revision", str(revision))
+
+    if "compaction_log" in payload_db:
+        _upsert_meta(
+            conn,
+            "compaction_log_json",
+            json.dumps(payload_db.get("compaction_log", []), sort_keys=True),
+        )
+    else:
+        _delete_meta(conn, "compaction_log_json")
+
+
+def _load_v2_state(conn):
+    meta_row = conn.execute(
+        "SELECT value FROM meta WHERE key = 'db_meta_json'"
+    ).fetchone()
+    revision_row = conn.execute(
+        "SELECT value FROM meta WHERE key = 'revision'"
+    ).fetchone()
+    compaction_row = conn.execute(
+        "SELECT value FROM meta WHERE key = 'compaction_log_json'"
+    ).fetchone()
+
+    default_meta = _default_db_state()["meta"]
+    if meta_row is None:
+        meta = default_meta
+    else:
+        try:
+            parsed_meta = json.loads(meta_row[0])
+        except json.JSONDecodeError as exc:
+            print(
+                f"Error: Failed to parse SQLite meta payload: {exc}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        meta = parsed_meta if isinstance(parsed_meta, dict) else default_meta
+
+    try:
+        revision = int(revision_row[0]) if revision_row else 0
+    except (TypeError, ValueError):
+        revision = 0
+
+    deps = {}
+    for child_id, parent_id in conn.execute(
+        "SELECT child_id, parent_id FROM issue_dependencies"
+    ).fetchall():
+        deps.setdefault(child_id, []).append(parent_id)
+
+    events = {}
+    for issue_id, event_type, timestamp, payload_json in conn.execute(
+        "SELECT issue_id, type, timestamp, payload_json FROM issue_events ORDER BY id"
+    ).fetchall():
+        event = {"type": event_type, "timestamp": timestamp}
+        if payload_json:
+            try:
+                payload = json.loads(payload_json)
+            except json.JSONDecodeError as exc:
+                print(
+                    f"Error: Failed to parse SQLite event payload: {exc}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if isinstance(payload, dict):
+                event.update(payload)
+        events.setdefault(issue_id, []).append(event)
+
+    issues = []
+    for row in conn.execute(
+        """
+        SELECT
+            id, title, description, priority, status, created_at, closed_at, parent,
+            repo, repo_commit, repo_branch, worktree_path, needs_review,
+            lifecycle_started_at, lifecycle_last_event_type
+        FROM issues
+        """
+    ).fetchall():
+        (
+            issue_id,
+            title,
+            description,
+            priority,
+            status,
+            created_at,
+            closed_at,
+            parent,
+            repo,
+            repo_commit,
+            repo_branch,
+            worktree_path,
+            needs_review,
+            lifecycle_started_at,
+            lifecycle_last_event_type,
+        ) = row
+        issue = {
+            "id": issue_id,
+            "title": title,
+            "description": description or "",
+            "priority": priority if priority is not None else 2,
+            "status": status or "Backlog",
+            "depends_on": deps.get(issue_id, []),
+            "events": events.get(issue_id, []),
+            "created_at": created_at or datetime.now().isoformat(),
+        }
+        if closed_at:
+            issue["closed_at"] = closed_at
+        if parent:
+            issue["parent"] = parent
+        if repo:
+            issue["repo"] = repo
+        if repo_commit:
+            issue["repo_commit"] = repo_commit
+        if repo_branch:
+            issue["repo_branch"] = repo_branch
+        if worktree_path:
+            issue["worktree_path"] = worktree_path
+        if needs_review:
+            issue["needs_review"] = True
+        if lifecycle_started_at or lifecycle_last_event_type:
+            issue["lifecycle"] = {}
+            if lifecycle_started_at:
+                issue["lifecycle"]["started_at"] = lifecycle_started_at
+            if lifecycle_last_event_type:
+                issue["lifecycle"]["last_event_type"] = lifecycle_last_event_type
+        issues.append(issue)
+
+    db = _ensure_db_shape({"issues": issues, "meta": meta})
+    if compaction_row and compaction_row[0]:
+        try:
+            compaction_log = json.loads(compaction_row[0])
+        except json.JSONDecodeError as exc:
+            print(
+                f"Error: Failed to parse SQLite compaction log payload: {exc}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if isinstance(compaction_log, list):
+            db["compaction_log"] = compaction_log
+    db["_storage_revision"] = revision
+    return db
+
+
+def _backup_sqlite_before_migration(conn, db_path):
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    backup_path = f"{db_path}.bak.{timestamp}"
+    try:
+        backup_conn = sqlite3.connect(backup_path, timeout=10.0)
+        try:
+            conn.backup(backup_conn)
+        finally:
+            backup_conn.close()
+    except sqlite3.Error as exc:
+        print(
+            f"Error: Failed to create backup '{backup_path}' before migration: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    return backup_path
+
+
+def _migrate_legacy_blob_to_v2(conn, db_path):
+    legacy_state_row = conn.execute(
         "SELECT value FROM storage WHERE key = 'db_json'"
     ).fetchone()
-    if state_row is None:
-        conn.execute(
-            "INSERT INTO storage (key, value) VALUES ('db_json', ?)",
-            (json.dumps(_default_db_state(), indent=2),),
-        )
-    revision_row = conn.execute(
+    legacy_revision_row = conn.execute(
         "SELECT value FROM storage WHERE key = 'revision'"
     ).fetchone()
-    if revision_row is None:
-        conn.execute(
-            "INSERT INTO storage (key, value) VALUES ('revision', '0')"
+
+    if not legacy_state_row:
+        return
+
+    backup_path = _backup_sqlite_before_migration(conn, db_path)
+    try:
+        legacy_db = _ensure_db_shape(json.loads(legacy_state_row[0]))
+    except json.JSONDecodeError as exc:
+        print(
+            f"Error: Failed to parse legacy SQLite state payload in '{db_path}': {exc}",
+            file=sys.stderr,
         )
-    conn.commit()
+        raise SystemExit(1)
+
+    try:
+        revision = int(legacy_revision_row[0]) if legacy_revision_row else 0
+    except (TypeError, ValueError):
+        revision = 0
+
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _create_v2_schema(conn)
+        _write_v2_state(conn, legacy_db, revision)
+        conn.execute("DROP TABLE IF EXISTS storage")
+        conn.commit()
+    except sqlite3.Error as exc:
+        conn.rollback()
+        print(f"Error: SQLite migration failed for '{db_path}': {exc}", file=sys.stderr)
+        raise SystemExit(1)
+
+    print(
+        f"Migrated legacy SQLite blob storage in '{db_path}' to normalized schema (backup: '{backup_path}').",
+        file=sys.stderr,
+    )
+
+
+def _ensure_sqlite_storage(conn, db_path=None):
+    if _is_v2_schema(conn):
+        return
+    if _has_legacy_blob_storage(conn):
+        if not db_path:
+            print("Error: Missing database path for SQLite migration.", file=sys.stderr)
+            raise SystemExit(1)
+        _migrate_legacy_blob_to_v2(conn, db_path)
+        return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _create_v2_schema(conn)
+        _write_v2_state(conn, _default_db_state(), 0)
+        conn.commit()
+    except sqlite3.Error as exc:
+        conn.rollback()
+        print(f"Error: SQLite schema initialization failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)
 
 
 def _load_db_from_sqlite(db_path):
@@ -340,38 +708,15 @@ def _load_db_from_sqlite(db_path):
         print(f"Error: Unable to open SQLite database '{db_path}': {exc}", file=sys.stderr)
         raise SystemExit(1)
     try:
-        _ensure_sqlite_storage(conn)
-        state_row = conn.execute(
-            "SELECT value FROM storage WHERE key = 'db_json'"
-        ).fetchone()
-        revision_row = conn.execute(
-            "SELECT value FROM storage WHERE key = 'revision'"
-        ).fetchone()
+        _ensure_sqlite_storage(conn, db_path=db_path)
+        db = _load_v2_state(conn)
     finally:
         conn.close()
-
-    try:
-        db = _ensure_db_shape(json.loads(state_row[0] if state_row else "{}"))
-    except json.JSONDecodeError as exc:
-        print(
-            f"Error: Failed to parse SQLite state payload in '{db_path}': {exc}",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-
-    try:
-        revision = int(revision_row[0]) if revision_row else 0
-    except (TypeError, ValueError):
-        revision = 0
-    db["_storage_revision"] = revision
     return db
 
 
 def _save_db_to_sqlite(db, db_path):
     expected_revision = db.get("_storage_revision")
-    payload_db = dict(_ensure_db_shape(db))
-    payload_db.pop("_storage_revision", None)
-    payload = json.dumps(payload_db, indent=2)
 
     try:
         conn = _connect_sqlite(db_path)
@@ -380,10 +725,10 @@ def _save_db_to_sqlite(db, db_path):
         raise SystemExit(1)
 
     try:
-        _ensure_sqlite_storage(conn)
+        _ensure_sqlite_storage(conn, db_path=db_path)
         conn.execute("BEGIN IMMEDIATE")
         current_row = conn.execute(
-            "SELECT value FROM storage WHERE key = 'revision'"
+            "SELECT value FROM meta WHERE key = 'revision'"
         ).fetchone()
         current_revision = int(current_row[0]) if current_row else 0
         if expected_revision is None:
@@ -396,14 +741,7 @@ def _save_db_to_sqlite(db, db_path):
             )
             raise SystemExit(1)
 
-        conn.execute(
-            "UPDATE storage SET value = ? WHERE key = 'db_json'",
-            (payload,),
-        )
-        conn.execute(
-            "UPDATE storage SET value = ? WHERE key = 'revision'",
-            (str(current_revision + 1),),
-        )
+        _write_v2_state(conn, db, current_revision + 1)
         conn.commit()
         db["_storage_revision"] = current_revision + 1
     except sqlite3.Error as exc:

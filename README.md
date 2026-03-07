@@ -229,6 +229,9 @@ sb event merge --repo --branch
 ## Database Format
 
 Tasks are stored in a SQLite database (global by default at `~/.sb.sqlite`).
+The on-disk format uses normalized tables (`issues`, `issue_dependencies`, `issue_events`, `meta`, `schema_info`).
+Older SQLite blob-format DBs are auto-migrated on first load with a timestamped backup.
+
 For migration/import-export workflows, the logical payload schema is:
 
 ```json

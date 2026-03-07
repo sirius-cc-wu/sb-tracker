@@ -104,8 +104,8 @@ def test_storage_error_paths(tmp_path, monkeypatch):
 
     sqlite_path = tmp_path / "state.sqlite"
     conn = cli._connect_sqlite(str(sqlite_path))
-    cli._ensure_sqlite_storage(conn)
-    conn.execute("UPDATE storage SET value = ? WHERE key = 'db_json'", ("{not json",))
+    cli._ensure_sqlite_storage(conn, db_path=str(sqlite_path))
+    conn.execute("UPDATE meta SET value = ? WHERE key = 'db_meta_json'", ("{not json",))
     conn.commit()
     conn.close()
     with pytest.raises(SystemExit) as exc:

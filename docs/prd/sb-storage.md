@@ -35,9 +35,12 @@
 
 ### 4.2 SQLite Storage Model
 
-1. Use one `storage` table with key/value rows:
-   - `db_json` (full logical state payload)
-   - `revision` (monotonic integer revision)
+1. Use normalized tables:
+   - `issues`
+   - `issue_dependencies`
+   - `issue_events`
+   - `meta` (includes `revision` and serialized app-level metadata)
+   - `schema_info` (`version=2`)
 2. Enforce WAL and durability-oriented pragmas:
    - `journal_mode=WAL`
    - `synchronous=FULL`
@@ -55,7 +58,13 @@
 1. If legacy `~/.sb.json` exists, fail with a deterministic error.
 2. No automatic migration or backup path is provided.
 
-### 4.5 Logical State Shape
+### 4.5 Legacy SQLite Blob Migration
+
+1. If legacy SQLite key/value blob storage is detected (`storage.db_json`), migrate automatically on first load.
+2. Create timestamped backup (`<db>.bak.<timestamp>`) before migration.
+3. Write normalized v2 tables and remove legacy `storage` table.
+
+### 4.6 Logical State Shape
 
 State must always normalize to:
 - `issues: []`
@@ -75,7 +84,7 @@ Primary implementation interfaces:
 
 ## 6. Error Handling Requirements
 
-1. Invalid JSON payloads must fail with parse error and non-zero exit.
+1. Invalid JSON payloads (legacy blob or metadata/event payloads) must fail with parse error and non-zero exit.
 2. SQLite connection/write failures must fail with non-zero exit.
 3. JSON DB path and legacy `.sb.json` presence must fail with non-zero exit.
 
@@ -85,7 +94,8 @@ Primary implementation interfaces:
 2. Stale revision write rejection.
 3. JSON DB path rejection.
 4. Legacy `.sb.json` rejection.
-5. SQLite open/write error paths.
+5. Legacy SQLite blob auto-migration and backup creation.
+6. SQLite open/write error paths.
 
 Primary tests:
 - `sb-tracker/tests/test_storage.py`
@@ -97,3 +107,4 @@ Primary tests:
 2. Concurrent stale writes are rejected safely.
 3. JSON DB paths are rejected deterministically.
 4. Legacy `~/.sb.json` presence is rejected deterministically.
+5. Legacy SQLite blob DBs are auto-migrated to normalized schema with backup.
