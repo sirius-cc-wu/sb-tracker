@@ -12,6 +12,8 @@ import sqlite3
 import subprocess
 from datetime import datetime, timedelta
 
+from . import importer
+
 DEFAULT_DB_PATH = "~/.sb.sqlite"
 LEGACY_JSON_DB_PATH = "~/.sb.json"
 VALID_EVENT_TYPES = {"switch", "create", "merge", "remove"}
@@ -121,32 +123,6 @@ def _encode_base36(data, length):
     return encoded
 
 
-def _is_hierarchical_id(issue_id):
-    if "." not in issue_id:
-        return False
-    parent, suffix = issue_id.rsplit(".", 1)
-    return bool(parent) and suffix.isdigit()
-
-
-def _bootstrap_child_counters(db):
-    meta = db["meta"]
-    counters = meta["child_counters"]
-    if meta.get("child_counters_bootstrapped"):
-        return
-    for issue in db["issues"]:
-        issue_id = issue.get("id", "")
-        if not _is_hierarchical_id(issue_id):
-            continue
-        parent_id, suffix = issue_id.rsplit(".", 1)
-        try:
-            child_num = int(suffix)
-        except ValueError:
-            continue
-        if child_num > counters.get(parent_id, 0):
-            counters[parent_id] = child_num
-    meta["child_counters_bootstrapped"] = True
-
-
 def _ensure_db_shape(db):
     if not isinstance(db, dict):
         db = {}
@@ -161,8 +137,6 @@ def _ensure_db_shape(db):
         meta["id_prefix"] = "sb"
     if "prefix_by_repo" not in meta or not isinstance(meta["prefix_by_repo"], dict):
         meta["prefix_by_repo"] = {}
-    if "child_counters" not in meta or not isinstance(meta["child_counters"], dict):
-        meta["child_counters"] = {}
     if "kanban" not in meta or not isinstance(meta["kanban"], dict):
         meta["kanban"] = {
             "columns": ["Backlog", "Ready", "Doing", "Review", "Done"],
@@ -178,7 +152,6 @@ def _ensure_db_shape(db):
             meta["kanban"]["done"] = "Done"
     if "kanban_by_repo" not in meta or not isinstance(meta["kanban_by_repo"], dict):
         meta["kanban_by_repo"] = {}
-    _bootstrap_child_counters(db)
     return db
 
 
@@ -979,21 +952,13 @@ def add(
             print(f"Error: ID '{custom_id}' already exists.")
             return
         new_id = custom_id
-    elif parent_id:
-        parent = next((i for i in db["issues"] if i["id"] == parent_id), None)
-        if not parent:
-            print(f"Error: Parent issue {parent_id} not found.")
-            return
-
-        counters = db["meta"]["child_counters"]
-        next_sub = int(counters.get(parent_id, 0)) + 1
-        existing_ids = {issue.get("id", "") for issue in db["issues"]}
-        new_id = f"{parent_id}.{next_sub}"
-        while new_id in existing_ids:
-            next_sub += 1
-            new_id = f"{parent_id}.{next_sub}"
-        counters[parent_id] = next_sub
     else:
+        if parent_id:
+            parent = next((i for i in db["issues"] if i["id"] == parent_id), None)
+            if not parent:
+                print(f"Error: Parent issue {parent_id} not found.")
+                return
+
         new_id = _next_top_level_id(db, title, description, created_at, repo=repo)
 
     config = get_kanban_config(db, repo)
@@ -1351,20 +1316,63 @@ def list_issues(
                 print(f"  - {entry['summary']}")
         return
 
+    # Build tree
+    issue_map = {i["id"]: i for i in issues}
+    children_map = {}
+    roots = []
+
+    # Populate children map and roots
+    for i in issues:
+        # Check "parent" (storage key)
+        pid = i.get("parent")
+        
+        # Fallback to old dot-notation for legacy IDs
+        if not pid and "." in i["id"]:
+            pid = i["id"].rsplit(".", 1)[0]
+        
+        if pid and pid in issue_map:
+            children_map.setdefault(pid, []).append(i)
+        else:
+            roots.append(i)
+
+    # Sort roots and children
+    roots.sort(key=lambda x: (x.get("priority", 2), x["id"]))
+    for pid in children_map:
+        children_map[pid].sort(key=lambda x: (x.get("priority", 2), x["id"]))
+
     print(f"{'ID':<12} {'P':<2} {'Status':<12} {'Deps':<10} {'Title'}")
     print("-" * 80)
-    for i in issues:
-        config = get_kanban_config(db, i.get("repo"))
-        status = normalize_status(i["status"], config) or "Unmapped"
-        deps = ",".join(i.get("depends_on", []))
+
+    def print_tree_recursive(issue, prefix="", is_last=False, is_root=True):
+        config = get_kanban_config(db, issue.get("repo"))
+        status = normalize_status(issue.get("status", "Backlog"), config) or "Unmapped"
+        deps = ",".join(issue.get("depends_on", []))
         if len(deps) > 10:
-            deps = deps[:7] + "..."
-        # Indent children
-        indent = "  " * i["id"].count(".")
-        nr_tag = " ⚑" if i.get("needs_review") else ""
-        print(
-            f"{i['id']:<12} {i.get('priority', 2):<2} {status:<12} {deps:<10} {indent}{i['title']}{nr_tag}"
-        )
+             deps = deps[:7] + "..."
+        
+        # Determine connector for THIS node
+        connector = ""
+        if not is_root:
+             connector = "└─ " if is_last else "├─ "
+
+        nr_tag = " ⚑" if issue.get("needs_review") else ""
+        
+        # Print current node
+        print(f"{issue['id']:<12} {issue.get('priority', 2):<2} {status:<12} {deps:<10} {prefix}{connector}{issue['title']}{nr_tag}")
+
+        # Prepare prefix for CHILDREN of this node
+        child_prefix = prefix
+        if not is_root:
+             child_prefix += "   " if is_last else "│  "
+        
+        children = children_map.get(issue["id"], [])
+        children.sort(key=lambda x: (x.get("priority", 2), x["id"]))
+
+        for idx, child in enumerate(children):
+             print_tree_recursive(child, child_prefix, is_last=(idx == len(children) - 1), is_root=False)
+
+    for root in roots:
+        print_tree_recursive(root)
 
 
 def board_view(
@@ -1577,6 +1585,10 @@ def show_issue(
                         print(f"Started At:  {lifecycle['started_at']}")
                     if lifecycle.get("last_event_type"):
                         print(f"Last Event:  {lifecycle.get('last_event_type')}")
+                    if "last_verification_exit_code" in lifecycle:
+                        code = lifecycle["last_verification_exit_code"]
+                        result = "PASS" if code == 0 else f"FAIL ({code})"
+                        print(f"Last Verify: {result}")
 
                 if i.get("events"):
                     print("\nAudit Log:")
@@ -1588,15 +1600,218 @@ def show_issue(
                             print(f"  [{ts}] Status: {e['old']} -> {e['new']}")
                         elif e["type"] == "dep_added":
                             print(f"  [{ts}] Dependency added: {e['parent']}")
+                        elif e["type"] == "verification_result":
+                            res = "PASS" if e["exit_code"] == 0 else f"FAIL ({e['exit_code']})"
+                            print(f"  [{ts}] Verified: {res} (cmd: {e['command']})")
             return
     print(f"Error: Issue {issue_id} not found.")
 
 
+
+def import_tasks(file_path, parent_id=None, dry_run=False, db_path=None):
+    if not os.path.exists(file_path):
+        print(f"Error: File '{file_path}' not found.")
+        return
+
+    try:
+        with open(file_path, "r") as f:
+            content = f.read()
+    except OSError as e:
+        print(f"Error reading file: {e}")
+        return
+
+    parsed_tasks = importer.parse_markdown_tasks(content)
+    if not parsed_tasks:
+        print("No tasks found in file.")
+        return
+
+    if dry_run:
+        print(f"(dry run) would import {len(parsed_tasks)} tasks from {file_path}")
+        # Indent display
+        for task in parsed_tasks:
+            indent = "  " * task["level"]
+            status = "[x]" if task["status"] == "done" else "[ ]"
+            print(f"{indent}{status} {task['title']}")
+        return
+
+    db = load_db(db_path=db_path)
+    created_at = datetime.now().isoformat()
+    config = get_kanban_config(db)
+    
+    # Context resolution
+    repo = None
+    repo_commit = None
+    repo_branch = None
+    worktree_path = None
+    
+    # Try to resolve context from current directory
+    # (import assumes we are in the repo context of the plan)
+    repo = get_repo_root()
+    if repo:
+        repo_commit = get_repo_commit(cwd=repo)
+        repo_branch = get_repo_branch(cwd=repo)
+        worktree_path = get_worktree_path(cwd=repo)
+
+    # Stack to track parent IDs: [(level, id), ...]
+    # Initialize with user-provided parent if any
+    parent_stack = []
+    if parent_id:
+        parent = next((i for i in db["issues"] if i["id"] == parent_id), None)
+        if not parent:
+            print(f"Error: Parent issue {parent_id} not found.")
+            return
+        # Base level is -1 so level 0 tasks are children of parent_id
+        parent_stack.append((-1, parent_id))
+
+    imported_count = 0
+    skipped_count = 0
+
+    for task in parsed_tasks:
+        # Resolve parent
+        current_level = task["level"]
+        
+        # Pop from stack until we find a parent with level < current_level
+        while parent_stack and parent_stack[-1][0] >= current_level:
+            parent_stack.pop()
+            
+        current_parent_id = parent_stack[-1][1] if parent_stack else None
+
+        # Check idempotency
+        # Match by Title + Parent + Repo
+        existing = None
+        for issue in db["issues"]:
+            if issue["title"] == task["title"]:
+                # Check parent equality
+                i_parent = issue.get("parent")
+                if i_parent == current_parent_id:
+                    # Check repo equality
+                    if issue.get("repo") == repo:
+                        existing = issue
+                        break
+        
+        if existing:
+            skipped_count += 1
+            # Push to stack so children can find it
+            parent_stack.append((current_level, existing["id"]))
+            
+            # Optional: Update status if plan says done but task is not?
+            # For now, simplistic: if plan says done, mark done.
+            if task["status"] == "done" and not is_issue_done(existing, db):
+                 _apply_status_change(existing, config["done"], config)
+            continue
+
+        # Create new task
+        new_id = _next_top_level_id(db, task["title"], "", created_at, repo=repo)
+        
+        issue = {
+            "id": new_id,
+            "title": task["title"],
+            "description": "",
+            "priority": 2,
+            "status": config["done"] if task["status"] == "done" else config["backlog"],
+            "depends_on": [],
+            "events": [],
+            "created_at": created_at,
+        }
+        if current_parent_id:
+            issue["parent"] = current_parent_id
+        if repo:
+            issue["repo"] = repo
+            issue["repo_commit"] = repo_commit
+            issue["repo_branch"] = repo_branch
+            issue["worktree_path"] = worktree_path
+            
+        if task["status"] == "done":
+             issue["closed_at"] = created_at
+
+        log_event(issue, "created", {"title": task["title"], "source": "import"})
+        db["issues"].append(issue)
+        imported_count += 1
+        
+        # Push to stack
+        parent_stack.append((current_level, new_id))
+
+    if imported_count > 0 or skipped_count > 0: # Only save if we did something or skipped something (meaning we read the DB)
+        # Actually we only need to save if imported_count > 0 OR we updated status of existing tasks
+        # For safety, just save.
+        save_db(db, db_path=db_path)
+        
+    print(f"Imported {imported_count} tasks, Skipped {skipped_count} tasks.")
+
+
+
+def run_verification(issue_id, command, db_path=None):
+    db = load_db(db_path=db_path)
+    issue = next((i for i in db["issues"] if i["id"] == issue_id), None)
+    if not issue:
+        print(f"Error: Issue {issue_id} not found.")
+        return
+
+    print(f"Verifying {issue_id} using command: {command}")
+    
+    try:
+        # Run the command and capture output
+        # Use shell=True to support pipelines and complex commands
+        result = subprocess.run(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, # Merge stderr into stdout
+            text=True,
+            timeout=300 # 5 minute timeout for safety
+        )
+        output = result.stdout
+        exit_code = result.returncode
+    except subprocess.TimeoutExpired:
+        print(f"Error: Verification timed out after 5 minutes.")
+        output = "Verification timed out."
+        exit_code = -1
+    except Exception as e:
+        print(f"Error executing command: {e}")
+        output = str(e)
+        exit_code = -2
+
+    # Truncate output to avoid massive token usage in history
+    max_output_len = 2048
+    if len(output) > max_output_len:
+        output = output[:max_output_len] + "\n... (output truncated)"
+
+    # Log the result
+    log_event(issue, "verification_result", {
+        "command": command,
+        "exit_code": exit_code,
+        "output": output
+    })
+    
+    # Store last result for quick show
+    issue.setdefault("lifecycle", {})["last_verification_exit_code"] = exit_code
+
+    config = get_kanban_config(db, issue.get("repo"))
+    if exit_code == 0:
+        print(f"Verification SUCCESS (Exit 0)")
+        # Auto-advance status
+        if issue.get("needs_review"):
+            _apply_status_change(issue, "Review", config)
+        else:
+            _apply_status_change(issue, config["done"], config)
+    else:
+        print(f"Verification FAILED (Exit {exit_code})")
+        # Ensure task remains in Doing or moves to Doing if it was in Backlog/Ready
+        current_status = normalize_status(issue.get("status"), config)
+        if current_status in (config["backlog"], "Ready"):
+             _apply_status_change(issue, "Doing", config)
+
+    save_db(db, db_path=db_path)
+
+
 def print_help():
+
+
     print("Usage: sb <command> [args]")
     print("Commands:")
     print("  init                      Initialize database (global by default)")
     print("  add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID]   Add issue")
+    print("  import <file>             Import tasks from markdown list")
     print("  list [--all] [--json]     List all open issues (use --all to include closed)")
     print("  ready [--json]            List only issues with no unresolved dependencies")
     print("  search <keyword> [--json] Search titles and descriptions")
@@ -1608,6 +1823,7 @@ def print_help():
     print("  begin <id> [--force-reopen]   Move task to Doing and capture context")
     print("  pause <id>                Move task to Ready")
     print("  review <id>               Move task to Review")
+    print("  verify <id> --cmd \"<CMD>\"  Run verification command and log result")
     print("  finish <id>               Kanban transition: Doing/Review → Done state")
     print("  event <type> [--task <id>]    Record external lifecycle event")
     print("  link <id> [branch=...] [worktree=...]   Link task to context")
@@ -1788,6 +2004,32 @@ def main():
                 custom_id=custom_id,
                 db_path=resolve_db_path(),
             )
+    elif cmd == "import":
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
+            print("Usage: sb import <file_path> [--parent ID] [--dry-run]")
+        else:
+            file_path = args[0]
+            parent_id = None
+            dry_run = False
+            
+            i = 1
+            while i < len(args):
+                if args[i] == "--parent" and i + 1 < len(args):
+                    parent_id = args[i + 1]
+                    i += 2
+                elif args[i] == "--dry-run":
+                    dry_run = True
+                    i += 1
+                else:
+                    i += 1
+            
+            import_tasks(
+                file_path, 
+                parent_id=parent_id, 
+                dry_run=dry_run, 
+                db_path=resolve_db_path()
+            )
     elif cmd == "list":
         args, opts = parse_common_flags(sys.argv[2:])
         show_all = "--all" in args
@@ -1915,6 +2157,24 @@ def main():
             print("Usage: sb review <id>")
         else:
             lifecycle_action(args[0], "review", db_path=resolve_db_path())
+    elif cmd == "verify":
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
+            print("Usage: sb verify <id> --cmd \"<command>\"")
+        else:
+            issue_id = args[0]
+            command = None
+            i = 1
+            while i < len(args):
+                if args[i] == "--cmd" and i + 1 < len(args):
+                    command = args[i + 1]
+                    i += 2
+                else:
+                    i += 1
+            if not command:
+                print("Usage: sb verify <id> --cmd \"<command>\"")
+            else:
+                run_verification(issue_id, command, db_path=resolve_db_path())
     elif cmd == "finish":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:

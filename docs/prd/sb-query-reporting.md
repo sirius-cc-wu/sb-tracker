@@ -64,8 +64,11 @@ Rules:
 
 ### 6.1 Human Output
 1. Deterministic tabular/section formats for common commands.
-2. Clear “no results” messages.
-3. Concise summaries for lifecycle/event operations.
+2. Hierarchy visualization: `list` and `ready` commands must render parent-child relationships using a tree structure with indentation and connectors (e.g., `└─`).
+   - Root tasks are sorted by Priority/ID.
+   - Child tasks are nested immediately under their parent.
+3. Clear “no results” messages.
+4. Concise summaries for lifecycle/event operations.
 
 ### 6.2 JSON Output
 1. `list --json` returns issue array payload.

@@ -50,7 +50,8 @@ Each issue supports:
    - Per-repo override: `meta.prefix_by_repo[repo_root]`
    - Configure via: `sb config prefix <PREFIX>` (repo) or `sb config prefix <PREFIX> --global`
 3. Child IDs:
-   - `<parent>.<n>` with monotonic per-parent counters (inherits parent prefix)
+   - Children use standard top-level ID generation (no special suffix).
+   - Parent-child relationship is stored in the `parent` field only.
 4. IDs must not be reused after deletion.
 
 ## 6. Status Model Requirements

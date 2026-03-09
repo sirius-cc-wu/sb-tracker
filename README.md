@@ -116,11 +116,15 @@ sb close sb-1
 ### Create and Modify
 
 - **`init`**: Initialize the database (defaults to `~/.sb.sqlite`)
-- **`add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review] [--id EXTERNAL_ID]`**
+- **`add`**: `sb add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review] [--id EXTERNAL_ID]`
   - Example: `sb add "Setup database" --priority 1 --desc "Configure PostgreSQL" --parent sb-1`
   - `--needs-review`: marks the task as requiring human sign-off before it can be closed (see `finish`)
   - `--id EXTERNAL_ID`: assign a literal external ID (e.g. `--id B1XF-3213` to mirror a Jira ticket)
-- **`update <id> [field=value ...]`**
+- **`import`**: `sb import <file.md> [--parent ID] [--dry-run]`
+  - Bulk imports tasks from a Markdown checklist.
+  - Respects indentation for hierarchy.
+  - Skips duplicates (idempotent).
+- **`update`**: `sb update <id> [field=value ...]`
   - Fields: `title`, `desc`, `p` (priority), `status`, `parent`, `needs_review` (true|false)
   - Example: `sb update sb-1 p=0 needs_review=true`
 - **`begin <id> [--force-reopen]`**: Move task to Doing and capture current context
@@ -170,9 +174,9 @@ sb close sb-1
 
 3. **Track Progress**: Update as you complete steps
    ```bash
-   sb begin sb-1.1
-   sb review sb-1.1
-   sb finish sb-1.1
+   sb begin sb-x9z8y
+   sb review sb-x9z8y
+   sb finish sb-x9z8y
    ```
 
 4. **End session cleanly**: Verify final state and hand off
@@ -214,8 +218,8 @@ sb event merge --repo --branch
 
 ### Task ID Format
 
-- **Root tasks**: `sb-<hash>` (for example: `sb-a3f8e9`)
-- **Sub-tasks**: `<parent>.<n>` (for example: `sb-a3f8e9.1`, `sb-a3f8e9.2`)
+- **Task IDs**: `sb-<hash>` (for example: `sb-a3f8e9`)
+- **Child IDs**: Same standard format (for example: `sb-x9z8y`)
 - **Parent relationship**: Use parent ID in `add` or `update`
 - **No ID reuse**: IDs are not re-used after task deletion
 
@@ -277,10 +281,7 @@ The file may also include metadata used for ID generation and child counters:
       "backlog": "Backlog",
       "done": "Done"
     },
-    "kanban_by_repo": {},
-    "child_counters": {
-      "sb-a3f8e9": 3
-    }
+    "kanban_by_repo": {}
   }
 }
 ```
@@ -294,20 +295,21 @@ $ sb add "Build authentication system"
 Created sb-a3f8e9: Build authentication system (P2)
 
 $ sb add "Design schema" --priority 1 --parent sb-a3f8e9
-Created sb-a3f8e9.1: Design schema (P1)
+Created sb-x9z8y: Design schema (P1)
 
 $ sb add "Implement login endpoint" --priority 1 --parent sb-a3f8e9
-Created sb-a3f8e9.2: Implement login endpoint (P1)
+Created sb-m4n5o: Implement login endpoint (P1)
 
 $ sb add "Write tests" --priority 2 --parent sb-a3f8e9
-Created sb-a3f8e9.3: Write tests (P2)
+Created sb-p2q3r: Write tests (P2)
 
 $ sb list
 ID              P  Status       Deps       Title
+--------------------------------------------------------------------------------
 sb-a3f8e9       2  Backlog                 Build authentication system
-sb-a3f8e9.1     1  Backlog                   Design schema
-sb-a3f8e9.2     1  Backlog                   Implement login endpoint
-sb-a3f8e9.3     2  Backlog                   Write tests
+sb-x9z8y        1  Backlog                 ├─ Design schema
+sb-m4n5o        1  Backlog                 ├─ Implement login endpoint
+sb-p2q3r        2  Backlog                 └─ Write tests
 ```
 
 ### Blocking Dependencies
@@ -322,14 +324,14 @@ Linked sb-b9d2c1 -> depends on -> sb-a3f8e9
 $ sb ready
 No issues found matching criteria.
 
-$ sb close sb-a3f8e9.1
-Updated sb-a3f8e9.1 status to Done
+$ sb close sb-x9z8y
+Updated sb-x9z8y status to Done
 
-$ sb close sb-a3f8e9.2
-Updated sb-a3f8e9.2 status to Done
+$ sb close sb-m4n5o
+Updated sb-m4n5o status to Done
 
-$ sb close sb-a3f8e9.3
-Updated sb-a3f8e9.3 status to Done
+$ sb close sb-p2q3r
+Updated sb-p2q3r status to Done
 
 $ sb close sb-a3f8e9
 Updated sb-a3f8e9 status to Done
@@ -344,14 +346,14 @@ sb-b9d2c1       1  Backlog                 Deploy to production
 Optional when you want a Markdown report for sharing:
 
 ```bash
-$ sb promote sb-1
-### [sb-1] Build authentication system
+$ sb promote sb-a3f8e9
+### [sb-a3f8e9] Build authentication system
 **Status:** Done | **Priority:** P2
 
 #### Sub-tasks
-- [x] sb-1.1: Design schema
-- [x] sb-1.2: Implement login endpoint
-- [x] sb-1.3: Write tests
+- [x] sb-x9z8y: Design schema
+- [x] sb-m4n5o: Implement login endpoint
+- [x] sb-p2q3r: Write tests
 
 #### Activity Log
 - 2026-02-04: Created

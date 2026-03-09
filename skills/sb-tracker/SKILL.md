@@ -133,8 +133,8 @@ Priority values:
 ```
 
 IDs:
-- Root task IDs are hash-based by default: `<prefix>-xxxxxx` (e.g. `sb-a3f8e9`, `BNC-a3f8e9`)
-- Subtasks append a numeric suffix (e.g. `BNC-a3f8e9.1`)
+- Task IDs are hash-based by default: `<prefix>-xxxxxx` (e.g. `sb-a3f8e9`, `BNC-a3f8e9`)
+- Child tasks use the same standard ID format (no suffixes).
 - External IDs (Jira, etc.) can be set literally: `sb add "..." --id B1XF-3213`
 - Configure prefix per-repo: `sb config prefix BNC` or globally: `sb config prefix SB --global`
 
