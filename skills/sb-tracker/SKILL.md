@@ -26,34 +26,28 @@ DB behavior:
 
 ## Operational Loop (Required)
 
-1. **Onboard**
-   ```bash
-   sb list --json
-   # or
-   sb ready
-   ```
-2. **Break down work**
-   ```bash
-   sb add "Parent task" --priority 1
-   sb add "Subtask" --priority 1 --parent <parent_id>
-   ```
-3. **Work lifecycle explicitly**
+1. **Onboard & Plan**
+   - Draft a `plan.md` using the `plan` skill.
+   - Ingest into the tracker: `sb import plan.md`
+   - Review the ready queue: `sb ready`
+
+2. **Work Lifecycle Explicitly**
    ```bash
    sb begin <id>
+   sb verify <id> --cmd "pytest ..."
    sb review <id>
    sb finish <id>
    ```
    Use `sb pause <id>` if work is parked.
-4. **Use dependencies and ready queue**
-   ```bash
-   sb dep <child_id> <parent_id>
-   sb ready
-   ```
-5. **Close session cleanly**
-   - Verify work (tests/screenshots as applicable)
-   - Complete tasks with `sb finish <id>` or `sb close <id>`
-   - Run `sb list --all`
-   - Share completed work and the next task
+
+3. **Observe & Repair**
+   - If verification fails, run `sb show <id>` to see the error context.
+   - Iterate on code and re-run `sb verify`.
+
+4. **Close Session Cleanly**
+   - Mark completed work as `Done`.
+   - Run `sb list --all`.
+   - Share a brief handoff summary.
 
 ## Command Playbook
 
@@ -62,11 +56,13 @@ Create and update:
 ```bash
 sb init
 sb add "Task Title" [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review] [--id EXTERNAL_ID]
+sb import <file.md> [--parent ID] [--dry-run]
 sb update <id> [title=...] [desc=...] [p=...] [status=...] [parent=...] [needs_review=true|false]
 sb config prefix <PREFIX>          # set prefix for current repo (e.g. BNC)
 sb config prefix <PREFIX> --global # set global default prefix
 sb config get prefix               # show effective prefix
 sb begin <id> [--force-reopen]
+sb verify <id> --cmd "<CMD>"       # Run verification and log result
 sb pause <id>
 sb review <id>
 sb finish <id>
