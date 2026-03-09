@@ -8,15 +8,15 @@ This document outlines the strategic direction for `sb-tracker` to become the de
 - [x] **Plan Ingestion**: `sb import` command for Markdown plans.
 - [x] **Verification Loop**: `sb verify` command for automated feedback.
 
-## Phase 1: Context Hydration (Short Term)
+## Phase 1: Context Hydration (Completed)
 Goal: Minimize "Discovery" phase turns and token costs.
 
-- [ ] **`sb context <id>`**:
+- [x] **`sb context <id>`**:
     - Generates a single-shot "Context Hydration" block for agents.
     - Includes task spec, linked file summaries, and the last `sb verify` failure.
-- [ ] **Enhanced `sb link`**:
-    - Associate specific file paths and line ranges with a task.
-    - Agents can immediately `read_file` only what's necessary.
+- [x] **Enhanced `sb link`**:
+    - Associate specific file paths with a task.
+    - Use `sb link <id> file=src/main.py`.
 
 ## Phase 2: Visibility & Governance (Medium Term)
 Goal: Align with Git-based workflows and enforce quality.

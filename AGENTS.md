@@ -44,12 +44,13 @@ sb verify <id> --cmd "pytest tests/test_feature.py"
 *   **Success**: Automatically advances status to `Review` or `Done`.
 *   **Failure**: Logs exit code/output to the task and keeps it in `Doing` for repair.
 
-### 4. Context Recovery
-If a session restarts, use the tracker to reconstruct the "Durable Project Memory."
+### 4. Context Recovery & Hydration
+If a session restarts, use the tracker to instantly reconstruct the "Durable Project Memory."
 ```bash
-sb list --json          # See the full state
-sb show <id>            # See the audit log and last verification failure
+# Get a single-shot context block including task spec, linked files, and last failure
+sb context <id> --files
 ```
+You can also use `sb list --json` for raw state inspection.
 
 ### 5. Handoff & Session Completion
 Before ending a work session:

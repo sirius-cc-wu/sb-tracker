@@ -667,8 +667,22 @@ def _migrate_legacy_blob_to_v2(conn, db_path):
     )
 
 
+def _migrate_schema_if_needed(conn):
+    # Check if linked_files_json column exists in issues table
+    cursor = conn.execute("PRAGMA table_info(issues)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "linked_files_json" not in columns:
+        try:
+            conn.execute("ALTER TABLE issues ADD COLUMN linked_files_json TEXT")
+            # Default to empty list JSON
+            conn.execute("UPDATE issues SET linked_files_json = '[]'")
+        except sqlite3.Error as exc:
+            print(f"Error migrating schema: {exc}", file=sys.stderr)
+
+
 def _ensure_sqlite_storage(conn, db_path=None):
     if _is_v2_schema(conn):
+        _migrate_schema_if_needed(conn)
         return
     if _has_legacy_blob_storage(conn):
         if not db_path:
