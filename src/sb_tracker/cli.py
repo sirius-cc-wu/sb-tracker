@@ -121,32 +121,6 @@ def _encode_base36(data, length):
     return encoded
 
 
-def _is_hierarchical_id(issue_id):
-    if "." not in issue_id:
-        return False
-    parent, suffix = issue_id.rsplit(".", 1)
-    return bool(parent) and suffix.isdigit()
-
-
-def _bootstrap_child_counters(db):
-    meta = db["meta"]
-    counters = meta["child_counters"]
-    if meta.get("child_counters_bootstrapped"):
-        return
-    for issue in db["issues"]:
-        issue_id = issue.get("id", "")
-        if not _is_hierarchical_id(issue_id):
-            continue
-        parent_id, suffix = issue_id.rsplit(".", 1)
-        try:
-            child_num = int(suffix)
-        except ValueError:
-            continue
-        if child_num > counters.get(parent_id, 0):
-            counters[parent_id] = child_num
-    meta["child_counters_bootstrapped"] = True
-
-
 def _ensure_db_shape(db):
     if not isinstance(db, dict):
         db = {}
@@ -161,8 +135,6 @@ def _ensure_db_shape(db):
         meta["id_prefix"] = "sb"
     if "prefix_by_repo" not in meta or not isinstance(meta["prefix_by_repo"], dict):
         meta["prefix_by_repo"] = {}
-    if "child_counters" not in meta or not isinstance(meta["child_counters"], dict):
-        meta["child_counters"] = {}
     if "kanban" not in meta or not isinstance(meta["kanban"], dict):
         meta["kanban"] = {
             "columns": ["Backlog", "Ready", "Doing", "Review", "Done"],
@@ -178,7 +150,6 @@ def _ensure_db_shape(db):
             meta["kanban"]["done"] = "Done"
     if "kanban_by_repo" not in meta or not isinstance(meta["kanban_by_repo"], dict):
         meta["kanban_by_repo"] = {}
-    _bootstrap_child_counters(db)
     return db
 
 
@@ -979,21 +950,13 @@ def add(
             print(f"Error: ID '{custom_id}' already exists.")
             return
         new_id = custom_id
-    elif parent_id:
-        parent = next((i for i in db["issues"] if i["id"] == parent_id), None)
-        if not parent:
-            print(f"Error: Parent issue {parent_id} not found.")
-            return
-
-        counters = db["meta"]["child_counters"]
-        next_sub = int(counters.get(parent_id, 0)) + 1
-        existing_ids = {issue.get("id", "") for issue in db["issues"]}
-        new_id = f"{parent_id}.{next_sub}"
-        while new_id in existing_ids:
-            next_sub += 1
-            new_id = f"{parent_id}.{next_sub}"
-        counters[parent_id] = next_sub
     else:
+        if parent_id:
+            parent = next((i for i in db["issues"] if i["id"] == parent_id), None)
+            if not parent:
+                print(f"Error: Parent issue {parent_id} not found.")
+                return
+
         new_id = _next_top_level_id(db, title, description, created_at, repo=repo)
 
     config = get_kanban_config(db, repo)
@@ -1351,20 +1314,63 @@ def list_issues(
                 print(f"  - {entry['summary']}")
         return
 
+    # Build tree
+    issue_map = {i["id"]: i for i in issues}
+    children_map = {}
+    roots = []
+
+    # Populate children map and roots
+    for i in issues:
+        # Check "parent" (storage key)
+        pid = i.get("parent")
+        
+        # Fallback to old dot-notation for legacy IDs
+        if not pid and "." in i["id"]:
+            pid = i["id"].rsplit(".", 1)[0]
+        
+        if pid and pid in issue_map:
+            children_map.setdefault(pid, []).append(i)
+        else:
+            roots.append(i)
+
+    # Sort roots and children
+    roots.sort(key=lambda x: (x.get("priority", 2), x["id"]))
+    for pid in children_map:
+        children_map[pid].sort(key=lambda x: (x.get("priority", 2), x["id"]))
+
     print(f"{'ID':<12} {'P':<2} {'Status':<12} {'Deps':<10} {'Title'}")
     print("-" * 80)
-    for i in issues:
-        config = get_kanban_config(db, i.get("repo"))
-        status = normalize_status(i["status"], config) or "Unmapped"
-        deps = ",".join(i.get("depends_on", []))
+
+    def print_tree_recursive(issue, prefix="", is_last=False, is_root=True):
+        config = get_kanban_config(db, issue.get("repo"))
+        status = normalize_status(issue.get("status", "Backlog"), config) or "Unmapped"
+        deps = ",".join(issue.get("depends_on", []))
         if len(deps) > 10:
-            deps = deps[:7] + "..."
-        # Indent children
-        indent = "  " * i["id"].count(".")
-        nr_tag = " ⚑" if i.get("needs_review") else ""
-        print(
-            f"{i['id']:<12} {i.get('priority', 2):<2} {status:<12} {deps:<10} {indent}{i['title']}{nr_tag}"
-        )
+             deps = deps[:7] + "..."
+        
+        # Determine connector for THIS node
+        connector = ""
+        if not is_root:
+             connector = "└─ " if is_last else "├─ "
+
+        nr_tag = " ⚑" if issue.get("needs_review") else ""
+        
+        # Print current node
+        print(f"{issue['id']:<12} {issue.get('priority', 2):<2} {status:<12} {deps:<10} {prefix}{connector}{issue['title']}{nr_tag}")
+
+        # Prepare prefix for CHILDREN of this node
+        child_prefix = prefix
+        if not is_root:
+             child_prefix += "   " if is_last else "│  "
+        
+        children = children_map.get(issue["id"], [])
+        children.sort(key=lambda x: (x.get("priority", 2), x["id"]))
+
+        for idx, child in enumerate(children):
+             print_tree_recursive(child, child_prefix, is_last=(idx == len(children) - 1), is_root=False)
+
+    for root in roots:
+        print_tree_recursive(root)
 
 
 def board_view(

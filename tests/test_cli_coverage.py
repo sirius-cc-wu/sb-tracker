@@ -36,18 +36,8 @@ def _run_main(monkeypatch, capsys, db_path, args):
 def test_core_helper_paths(capsys):
     assert cli._encode_base36(b"\x00", 4) == "0000"
     assert len(cli._encode_base36(b"\xff\xff\xff", 2)) == 2
-    assert cli._is_hierarchical_id("sb-1.2")
-    assert not cli._is_hierarchical_id("sb-1.x")
-    assert not cli._is_hierarchical_id("sb-1")
-
-    db = {
-        "issues": [_issue("sb-1.2"), _issue("sb-1.5"), _issue("sb-bad.x")],
-        "meta": {"child_counters": {}},
-    }
-    shaped = cli._ensure_db_shape(db)
-    assert shaped["meta"]["child_counters"]["sb-1"] == 5
-    assert shaped["meta"]["child_counters_bootstrapped"] is True
-
+    # hierarchical ID helpers are removed or deprecated in favor of flat IDs
+    
     fallback = {"columns": ["Backlog"], "backlog": "Backlog", "done": "Done"}
     normalized = cli._normalize_kanban_config({"columns": ["Doing"]}, fallback)
     assert "Backlog" in normalized["columns"]
@@ -112,6 +102,12 @@ def test_storage_error_paths(tmp_path, monkeypatch):
         cli._load_db_from_sqlite(str(sqlite_path))
     assert exc.value.code == 1
 
+    # Check that hierarchical helper was removed from public interface
+    # but db shape logic handles legacy IDs gracefully
+    db = {"issues": [_issue("sb-1.2")]}
+    shaped = cli._ensure_db_shape(db)
+    assert shaped["issues"][0]["id"] == "sb-1.2"
+
     sqlite_path_2 = tmp_path / "open-fail.sqlite"
     monkeypatch.setattr(
         cli.sqlite3,
@@ -144,7 +140,11 @@ def test_functional_commands_cover_paths(tmp_path, monkeypatch, capsys):
     parent_id = cli.load_db(str(db_path))["issues"][0]["id"]
     cli.add("child", "", 2, parent_id=parent_id, db_path=str(db_path))
     db = cli.load_db(str(db_path))
-    child_id = [i["id"] for i in db["issues"] if i.get("parent") == parent_id][0]
+    # Child ID is now independent, just check parent link
+    child_issue = [i for i in db["issues"] if i.get("parent") == parent_id][0]
+    child_id = child_issue["id"]
+    assert child_id != parent_id
+    assert "." not in child_id  # Should be flat hash ID now
 
     cli.add("blocked", "", 2, db_path=str(db_path))
     blocked_id = [i["id"] for i in cli.load_db(str(db_path))["issues"] if i["title"] == "blocked"][0]
