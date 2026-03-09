@@ -340,7 +340,8 @@ def _create_v2_schema(conn):
             worktree_path TEXT,
             needs_review INTEGER NOT NULL DEFAULT 0,
             lifecycle_started_at TEXT,
-            lifecycle_last_event_type TEXT
+            lifecycle_last_event_type TEXT,
+            linked_files_json TEXT
         )
         """
     )
@@ -411,8 +412,9 @@ def _write_v2_state(conn, db, revision):
             INSERT INTO issues (
                 id, title, description, priority, status, created_at, closed_at,
                 parent, repo, repo_commit, repo_branch, worktree_path,
-                needs_review, lifecycle_started_at, lifecycle_last_event_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                needs_review, lifecycle_started_at, lifecycle_last_event_type,
+                linked_files_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 issue["id"],
@@ -430,6 +432,7 @@ def _write_v2_state(conn, db, revision):
                 1 if issue.get("needs_review") else 0,
                 lifecycle.get("started_at"),
                 lifecycle.get("last_event_type"),
+                json.dumps(issue.get("linked_files", []), sort_keys=True),
             ),
         )
         for dep in issue.get("depends_on", []):
@@ -524,7 +527,7 @@ def _load_v2_state(conn):
         SELECT
             id, title, description, priority, status, created_at, closed_at, parent,
             repo, repo_commit, repo_branch, worktree_path, needs_review,
-            lifecycle_started_at, lifecycle_last_event_type
+            lifecycle_started_at, lifecycle_last_event_type, linked_files_json
         FROM issues
         """
     ).fetchall():
@@ -544,6 +547,7 @@ def _load_v2_state(conn):
             needs_review,
             lifecycle_started_at,
             lifecycle_last_event_type,
+            linked_files_json,
         ) = row
         issue = {
             "id": issue_id,
@@ -575,6 +579,15 @@ def _load_v2_state(conn):
                 issue["lifecycle"]["started_at"] = lifecycle_started_at
             if lifecycle_last_event_type:
                 issue["lifecycle"]["last_event_type"] = lifecycle_last_event_type
+        
+        if linked_files_json:
+            try:
+                issue["linked_files"] = json.loads(linked_files_json)
+            except json.JSONDecodeError:
+                issue["linked_files"] = []
+        else:
+            issue["linked_files"] = []
+            
         issues.append(issue)
 
     db = _ensure_db_shape({"issues": issues, "meta": meta})
@@ -1132,14 +1145,14 @@ def lifecycle_action(issue_id, action, force_reopen=False, db_path=None):
         print(f"  ↳ Human sign-off required — run `sb finish {issue_id}` again to close.")
 
 
-def link_issue(issue_id, branch=None, worktree=None, db_path=None):
+def link_issue(issue_id, branch=None, worktree=None, files=None, db_path=None):
     db = load_db(db_path=db_path)
     issue = next((i for i in db["issues"] if i["id"] == issue_id), None)
     if not issue:
         print(f"Error: Issue {issue_id} not found.")
         return
-    if branch is None and worktree is None:
-        print("Usage: sb link <id> [branch=<name>] [worktree=<path>]")
+    if branch is None and worktree is None and files is None:
+        print("Usage: sb link <id> [branch=<name>] [worktree=<path>] [file=<path>]")
         return
 
     changes = {}
@@ -1154,6 +1167,17 @@ def link_issue(issue_id, branch=None, worktree=None, db_path=None):
                 "new": worktree_norm,
             }
             issue["worktree_path"] = worktree_norm
+    if files:
+        # Normalize paths relative to worktree if available, else absolute
+        normalized_files = []
+        for f in files:
+            normalized_files.append(os.path.realpath(os.path.abspath(os.path.expanduser(f))))
+        
+        current_files = issue.get("linked_files", [])
+        new_files = list(set(current_files + normalized_files))
+        if len(new_files) != len(current_files):
+            changes["linked_files"] = {"old": current_files, "new": new_files}
+            issue["linked_files"] = new_files
 
     _touch_lifecycle(issue, "context_linked")
     if changes:
@@ -1804,6 +1828,76 @@ def run_verification(issue_id, command, db_path=None):
     save_db(db, db_path=db_path)
 
 
+def show_context(issue_id, include_files=False, db_path=None):
+    db = load_db(db_path=db_path)
+    issue = next((i for i in db["issues"] if i["id"] == issue_id), None)
+    if not issue:
+        print(f"Error: Issue {issue_id} not found.")
+        return
+
+    config = get_kanban_config(db, issue.get("repo"))
+    status = normalize_status(issue["status"], config) or "Unmapped"
+    
+    print(f"--- Task Context: {issue['id']} ---")
+    print(f"Title: {issue['title']}")
+    print(f"Status: {status} | Priority: P{issue.get('priority', 2)}")
+    if issue.get("description"):
+        print(f"\nDescription:\n{issue['description']}")
+
+    # Environment
+    print("\n--- Environment ---")
+    if issue.get("repo"):
+        print(f"Repo:   {issue['repo']}")
+    if issue.get("repo_branch"):
+        print(f"Branch: {issue['repo_branch']}")
+    if issue.get("repo_commit"):
+        print(f"Commit: {issue['repo_commit']}")
+
+    # Verification Result
+    last_verify = None
+    if issue.get("events"):
+        # Find the most recent verification_result
+        for e in reversed(issue["events"]):
+            if e["type"] == "verification_result":
+                last_verify = e
+                break
+    
+    if last_verify:
+        print("\n--- Last Verification ---")
+        res = "SUCCESS" if last_verify["exit_code"] == 0 else f"FAILED (Exit {last_verify['exit_code']})"
+        print(f"Result:  {res}")
+        print(f"Command: {last_verify['command']}")
+        print(f"Time:    {last_verify['timestamp']}")
+        print(f"\nOutput Snippet:\n{last_verify['output']}")
+
+    # Linked Files
+    linked_files = issue.get("linked_files", [])
+    if linked_files:
+        print("\n--- Linked Files ---")
+        for f in linked_files:
+            print(f"- {f}")
+            if include_files:
+                if os.path.exists(f):
+                    try:
+                        with open(f, "r") as fp:
+                            content = fp.read(4096) # Truncate at 4KB
+                            print(f"  ```\n{content}\n  ```")
+                    except Exception as e:
+                        print(f"  (Error reading file: {e})")
+                else:
+                    print("  (File not found)")
+
+    # Sub-tasks
+    children = [i for i in db["issues"] if i.get("parent") == issue_id]
+    if children:
+        print("\n--- Sub-tasks ---")
+        for child in children:
+            c_status = normalize_status(child["status"], config) or "Unmapped"
+            print(f"- [{child['id']}] {c_status}: {child['title']}")
+
+    print("\n--- End of Context ---")
+
+
 def print_help():
 
 
@@ -1828,6 +1922,7 @@ def print_help():
     print("  event <type> [--task <id>]    Record external lifecycle event")
     print("  link <id> [branch=...] [worktree=...]   Link task to context")
     print("  promote <id>              Export task as Markdown")
+    print("  context <id> [--files]    Show hydration context for agents")
     print("  show <id> [--json]        Show issue details")
     print("  close <id>                Close/archive issue (marks task complete from any state)")
     print("  rm <id>                   Delete issue")
@@ -2209,23 +2304,34 @@ def main():
     elif cmd == "link":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
-            print("Usage: sb link <id> [branch=<name>] [worktree=<path>]")
+            print("Usage: sb link <id> [branch=...] [worktree=...] [file=...]")
         else:
             issue_id = args[0]
             branch = None
             worktree = None
+            files = []
             for arg in args[1:]:
                 if arg.startswith("branch="):
                     branch = arg.split("=", 1)[1]
                 elif arg.startswith("worktree="):
                     worktree = arg.split("=", 1)[1]
-            link_issue(issue_id, branch=branch, worktree=worktree, db_path=resolve_db_path())
+                elif arg.startswith("file="):
+                    files.append(arg.split("=", 1)[1])
+            link_issue(issue_id, branch=branch, worktree=worktree, files=files, db_path=resolve_db_path())
     elif cmd == "promote":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
             print("Usage: sb promote <id>")
         else:
             promote_issue(args[0], db_path=resolve_db_path())
+    elif cmd == "context":
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
+            print("Usage: sb context <id> [--files]")
+        else:
+            issue_id = args[0]
+            include_files = "--files" in args
+            show_context(issue_id, include_files=include_files, db_path=resolve_db_path())
     elif cmd == "stats":
         args, opts = parse_common_flags(sys.argv[2:])
         show_stats(db_path=resolve_db_path())
