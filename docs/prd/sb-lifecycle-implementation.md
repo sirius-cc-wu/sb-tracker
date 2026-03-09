@@ -32,7 +32,7 @@ The lifecycle PRD (`sb-lifecycle.md`) required a decision-complete execution pla
 ## 5. Work Breakdown Structure
 
 ### 5.1 Lifecycle command surface and transition engine
-- Add `begin`, `pause`, `review`, `finish` command handlers.
+- Add `begin`, `pause`, `finish` command handlers.
 - Implement transition rules and idempotent no-op behavior.
 - Add lifecycle audit events.
 - Preserve close-command behavior.
