@@ -49,8 +49,7 @@ We need a lightweight lifecycle model that:
 Add commands:
 - `sb begin <id>`: move to `Doing` and capture current repo context.
 - `sb pause <id>`: move to `Ready`.
-- `sb review <id>`: move to `Review`.
-- `sb finish <id>`: move to `Done`.
+- `sb finish <id>`: move to `Done` (or `Review` if `@needs-review` is set).
 
 Rules:
 - No-op transitions must be safe and idempotent.
@@ -94,9 +93,8 @@ Canonical statuses:
 Transitions:
 1. `begin`: `Backlog|Ready|Review -> Doing`
 2. `pause`: `Doing -> Ready`
-3. `review`: `Doing -> Review`
-4. `finish`: `Doing -> Review` (when `needs_review=true`) or `Doing|Review -> Done`
-   - When a task has `needs_review=true`, `finish` from `Doing` stops at `Review` and prints a reminder.
+3. `finish`: `Doing -> Review` (when `needs_review=true`) or `Doing|Review -> Done`
+   - When a task has `needs_review=true`, `finish` (or successful `verify`) from `Doing` stops at `Review` and prints a reminder.
    - A second `finish` from `Review` always closes to `Done` (human has confirmed).
    - `close <id>` bypasses `needs_review` and force-closes from any state.
 

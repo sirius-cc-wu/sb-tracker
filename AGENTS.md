@@ -5,12 +5,14 @@ A lightweight, standalone task tracker designed for **Harness Engineering**. It 
 ## The Harness Philosophy
 
 Successful long-horizon agents rely on a strict **Autonomous Loop**:
-1.  **Plan**: Draft a `plan.md` (Durable Project Memory).
+1.  **Plan**: Draft a `plan.md` (Durable Project Memory). Include `@needs-review` in task titles for human sign-off.
 2.  **Import**: Use `sb import` to convert the plan into executable tasks.
 3.  **Act**: Implement the next "Ready" task.
-4.  **Verify**: Use `sb verify` to run tests and log results to the task audit trail.
-5.  **Observe & Repair**: Use `sb show` to analyze failures and iterate.
-6.  **Update**: Advance the task status and sync documentation.
+4.  **Verify**: Use `sb verify` to run tests and log results.
+    - **Success**: Automatically advances to `Done` (or `Review` if `@needs-review` is set).
+    - **Failure**: Logs exit code/output to the task and keeps it in `Doing` for repair.
+5.  **Observe & Repair**: Use `sb show` or `sb context` to analyze failures and iterate.
+6.  **Update**: Use `sb finish` for manual completion or `sb promote` to sync documentation.
 
 ## Installation
 
@@ -41,7 +43,7 @@ Never mark a task complete without verification.
 # Run a test command and log the result to the task
 sb verify <id> --cmd "pytest tests/test_feature.py"
 ```
-*   **Success**: Automatically advances status to `Review` or `Done`.
+*   **Success**: Automatically advances status to `Review` (if flagged) or `Done`.
 *   **Failure**: Logs exit code/output to the task and keeps it in `Doing` for repair.
 
 ### 4. Context Recovery & Hydration
@@ -50,7 +52,7 @@ If a session restarts, use the tracker to instantly reconstruct the "Durable Pro
 # Get a single-shot context block including task spec, linked files, and last failure
 sb context <id> --files
 ```
-You can also use `sb list --json` for raw state inspection.
+You can also use `sb list --json` or `sb board` for state inspection.
 
 ### 5. Handoff & Session Completion
 Before ending a work session:
@@ -58,7 +60,7 @@ Before ending a work session:
 2.  **Verify**: Ensure all "Done" tasks have a passing `verification_result`.
 3.  **Clean up**: Run `sb compact` to remove old closed tasks.
 4.  **Commit**: Commit code changes.
-5.  **Summary**: Provide a brief report of completed work and the next task.
+5.  **Summary**: Provide a brief report of completed work using `sb promote <id>`.
 
 ## Commands
 
@@ -69,16 +71,19 @@ Before ending a work session:
 - **`dep`**: `sb dep <child> <parent>` (Create blocking dependencies)
 
 ### Lifecycle & Verification
-- **`begin <id>`**: Start active work (Doing).
-- **`verify <id> --cmd "<CMD>"`**: Run tests and log results to the task audit trail.
-- **`review <id>`**: Hand off for review.
-- **`finish <id>`**: Complete work (Done).
+- **`begin <id>`**: Start active work (Doing). Captures repo/branch/worktree context.
+- **`verify <id> --cmd "<CMD>"`**: Run tests and log results. Auto-advances to `Review` or `Done`.
+- **`finish <id>`**: Complete work. Moves to `Review` (if flagged) or `Done`.
+- **`event <type>`**: Ingest external events (switch/merge/create).
+- **`link <id>`**: Manually bind task to branch/worktree/files.
 
 ### Inspection & Reporting
 - **`list [--all] [--json] [--repo]`**: Shows tasks with hierarchy and status.
 - **`ready`**: Shows tasks with no unresolved dependencies.
+- **`board`**: Shows Kanban view of tasks.
 - **`show <id>`**: Displays details, context, and **Verification Audit Log**.
 - **`promote <id>`**: Generates a Markdown summary of the task and its history.
+- **`context <id>`**: Shows hydration context for agents.
 
 ## Priority Levels
 
