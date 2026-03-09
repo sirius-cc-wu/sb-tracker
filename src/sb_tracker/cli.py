@@ -1585,6 +1585,10 @@ def show_issue(
                         print(f"Started At:  {lifecycle['started_at']}")
                     if lifecycle.get("last_event_type"):
                         print(f"Last Event:  {lifecycle.get('last_event_type')}")
+                    if "last_verification_exit_code" in lifecycle:
+                        code = lifecycle["last_verification_exit_code"]
+                        result = "PASS" if code == 0 else f"FAIL ({code})"
+                        print(f"Last Verify: {result}")
 
                 if i.get("events"):
                     print("\nAudit Log:")
@@ -1596,6 +1600,9 @@ def show_issue(
                             print(f"  [{ts}] Status: {e['old']} -> {e['new']}")
                         elif e["type"] == "dep_added":
                             print(f"  [{ts}] Dependency added: {e['parent']}")
+                        elif e["type"] == "verification_result":
+                            res = "PASS" if e["exit_code"] == 0 else f"FAIL ({e['exit_code']})"
+                            print(f"  [{ts}] Verified: {res} (cmd: {e['command']})")
             return
     print(f"Error: Issue {issue_id} not found.")
 
@@ -1732,7 +1739,73 @@ def import_tasks(file_path, parent_id=None, dry_run=False, db_path=None):
     print(f"Imported {imported_count} tasks, Skipped {skipped_count} tasks.")
 
 
+
+def run_verification(issue_id, command, db_path=None):
+    db = load_db(db_path=db_path)
+    issue = next((i for i in db["issues"] if i["id"] == issue_id), None)
+    if not issue:
+        print(f"Error: Issue {issue_id} not found.")
+        return
+
+    print(f"Verifying {issue_id} using command: {command}")
+    
+    try:
+        # Run the command and capture output
+        # Use shell=True to support pipelines and complex commands
+        result = subprocess.run(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, # Merge stderr into stdout
+            text=True,
+            timeout=300 # 5 minute timeout for safety
+        )
+        output = result.stdout
+        exit_code = result.returncode
+    except subprocess.TimeoutExpired:
+        print(f"Error: Verification timed out after 5 minutes.")
+        output = "Verification timed out."
+        exit_code = -1
+    except Exception as e:
+        print(f"Error executing command: {e}")
+        output = str(e)
+        exit_code = -2
+
+    # Truncate output to avoid massive token usage in history
+    max_output_len = 2048
+    if len(output) > max_output_len:
+        output = output[:max_output_len] + "\n... (output truncated)"
+
+    # Log the result
+    log_event(issue, "verification_result", {
+        "command": command,
+        "exit_code": exit_code,
+        "output": output
+    })
+    
+    # Store last result for quick show
+    issue.setdefault("lifecycle", {})["last_verification_exit_code"] = exit_code
+
+    config = get_kanban_config(db, issue.get("repo"))
+    if exit_code == 0:
+        print(f"Verification SUCCESS (Exit 0)")
+        # Auto-advance status
+        if issue.get("needs_review"):
+            _apply_status_change(issue, "Review", config)
+        else:
+            _apply_status_change(issue, config["done"], config)
+    else:
+        print(f"Verification FAILED (Exit {exit_code})")
+        # Ensure task remains in Doing or moves to Doing if it was in Backlog/Ready
+        current_status = normalize_status(issue.get("status"), config)
+        if current_status in (config["backlog"], "Ready"):
+             _apply_status_change(issue, "Doing", config)
+
+    save_db(db, db_path=db_path)
+
+
 def print_help():
+
 
     print("Usage: sb <command> [args]")
     print("Commands:")
@@ -1750,6 +1823,7 @@ def print_help():
     print("  begin <id> [--force-reopen]   Move task to Doing and capture context")
     print("  pause <id>                Move task to Ready")
     print("  review <id>               Move task to Review")
+    print("  verify <id> --cmd \"<CMD>\"  Run verification command and log result")
     print("  finish <id>               Kanban transition: Doing/Review → Done state")
     print("  event <type> [--task <id>]    Record external lifecycle event")
     print("  link <id> [branch=...] [worktree=...]   Link task to context")
@@ -2083,6 +2157,24 @@ def main():
             print("Usage: sb review <id>")
         else:
             lifecycle_action(args[0], "review", db_path=resolve_db_path())
+    elif cmd == "verify":
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
+            print("Usage: sb verify <id> --cmd \"<command>\"")
+        else:
+            issue_id = args[0]
+            command = None
+            i = 1
+            while i < len(args):
+                if args[i] == "--cmd" and i + 1 < len(args):
+                    command = args[i + 1]
+                    i += 2
+                else:
+                    i += 1
+            if not command:
+                print("Usage: sb verify <id> --cmd \"<command>\"")
+            else:
+                run_verification(issue_id, command, db_path=resolve_db_path())
     elif cmd == "finish":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
