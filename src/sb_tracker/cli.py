@@ -12,6 +12,8 @@ import sqlite3
 import subprocess
 from datetime import datetime, timedelta
 
+from . import importer
+
 DEFAULT_DB_PATH = "~/.sb.sqlite"
 LEGACY_JSON_DB_PATH = "~/.sb.json"
 VALID_EVENT_TYPES = {"switch", "create", "merge", "remove"}
@@ -1598,11 +1600,145 @@ def show_issue(
     print(f"Error: Issue {issue_id} not found.")
 
 
+
+def import_tasks(file_path, parent_id=None, dry_run=False, db_path=None):
+    if not os.path.exists(file_path):
+        print(f"Error: File '{file_path}' not found.")
+        return
+
+    try:
+        with open(file_path, "r") as f:
+            content = f.read()
+    except OSError as e:
+        print(f"Error reading file: {e}")
+        return
+
+    parsed_tasks = importer.parse_markdown_tasks(content)
+    if not parsed_tasks:
+        print("No tasks found in file.")
+        return
+
+    if dry_run:
+        print(f"(dry run) would import {len(parsed_tasks)} tasks from {file_path}")
+        # Indent display
+        for task in parsed_tasks:
+            indent = "  " * task["level"]
+            status = "[x]" if task["status"] == "done" else "[ ]"
+            print(f"{indent}{status} {task['title']}")
+        return
+
+    db = load_db(db_path=db_path)
+    created_at = datetime.now().isoformat()
+    config = get_kanban_config(db)
+    
+    # Context resolution
+    repo = None
+    repo_commit = None
+    repo_branch = None
+    worktree_path = None
+    
+    # Try to resolve context from current directory
+    # (import assumes we are in the repo context of the plan)
+    repo = get_repo_root()
+    if repo:
+        repo_commit = get_repo_commit(cwd=repo)
+        repo_branch = get_repo_branch(cwd=repo)
+        worktree_path = get_worktree_path(cwd=repo)
+
+    # Stack to track parent IDs: [(level, id), ...]
+    # Initialize with user-provided parent if any
+    parent_stack = []
+    if parent_id:
+        parent = next((i for i in db["issues"] if i["id"] == parent_id), None)
+        if not parent:
+            print(f"Error: Parent issue {parent_id} not found.")
+            return
+        # Base level is -1 so level 0 tasks are children of parent_id
+        parent_stack.append((-1, parent_id))
+
+    imported_count = 0
+    skipped_count = 0
+
+    for task in parsed_tasks:
+        # Resolve parent
+        current_level = task["level"]
+        
+        # Pop from stack until we find a parent with level < current_level
+        while parent_stack and parent_stack[-1][0] >= current_level:
+            parent_stack.pop()
+            
+        current_parent_id = parent_stack[-1][1] if parent_stack else None
+
+        # Check idempotency
+        # Match by Title + Parent + Repo
+        existing = None
+        for issue in db["issues"]:
+            if issue["title"] == task["title"]:
+                # Check parent equality
+                i_parent = issue.get("parent")
+                if i_parent == current_parent_id:
+                    # Check repo equality
+                    if issue.get("repo") == repo:
+                        existing = issue
+                        break
+        
+        if existing:
+            skipped_count += 1
+            # Push to stack so children can find it
+            parent_stack.append((current_level, existing["id"]))
+            
+            # Optional: Update status if plan says done but task is not?
+            # For now, simplistic: if plan says done, mark done.
+            if task["status"] == "done" and not is_issue_done(existing, db):
+                 _apply_status_change(existing, config["done"], config)
+            continue
+
+        # Create new task
+        new_id = _next_top_level_id(db, task["title"], "", created_at, repo=repo)
+        
+        issue = {
+            "id": new_id,
+            "title": task["title"],
+            "description": "",
+            "priority": 2,
+            "status": config["done"] if task["status"] == "done" else config["backlog"],
+            "depends_on": [],
+            "events": [],
+            "created_at": created_at,
+        }
+        if current_parent_id:
+            issue["parent"] = current_parent_id
+        if repo:
+            issue["repo"] = repo
+            issue["repo_commit"] = repo_commit
+            issue["repo_branch"] = repo_branch
+            issue["worktree_path"] = worktree_path
+            
+        if task["status"] == "done":
+             issue["closed_at"] = created_at
+
+        log_event(issue, "created", {"title": task["title"], "source": "import"})
+        db["issues"].append(issue)
+        imported_count += 1
+        
+        # Push to stack
+        parent_stack.append((current_level, new_id))
+
+    if imported_count > 0 or skipped_count > 0: # Only save if we did something or skipped something (meaning we read the DB)
+        # Actually we only need to save if imported_count > 0 OR we updated status of existing tasks
+        # For safety, just save.
+        save_db(db, db_path=db_path)
+        
+    print(f"Imported {imported_count} tasks, Skipped {skipped_count} tasks.")
+
+
 def print_help():
+
     print("Usage: sb <command> [args]")
     print("Commands:")
     print("  init                      Initialize database (global by default)")
     print("  add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID]   Add issue")
+    print("  import <file>             Import tasks from markdown list")
     print("  list [--all] [--json]     List all open issues (use --all to include closed)")
     print("  ready [--json]            List only issues with no unresolved dependencies")
     print("  search <keyword> [--json] Search titles and descriptions")
@@ -1793,6 +1929,32 @@ def main():
                 needs_review=needs_review,
                 custom_id=custom_id,
                 db_path=resolve_db_path(),
+            )
+    elif cmd == "import":
+        args, opts = parse_common_flags(sys.argv[2:])
+        if len(args) < 1:
+            print("Usage: sb import <file_path> [--parent ID] [--dry-run]")
+        else:
+            file_path = args[0]
+            parent_id = None
+            dry_run = False
+            
+            i = 1
+            while i < len(args):
+                if args[i] == "--parent" and i + 1 < len(args):
+                    parent_id = args[i + 1]
+                    i += 2
+                elif args[i] == "--dry-run":
+                    dry_run = True
+                    i += 1
+                else:
+                    i += 1
+            
+            import_tasks(
+                file_path, 
+                parent_id=parent_id, 
+                dry_run=dry_run, 
+                db_path=resolve_db_path()
             )
     elif cmd == "list":
         args, opts = parse_common_flags(sys.argv[2:])

@@ -116,11 +116,15 @@ sb close sb-1
 ### Create and Modify
 
 - **`init`**: Initialize the database (defaults to `~/.sb.sqlite`)
-- **`add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review] [--id EXTERNAL_ID]`**
+- **`add`**: `sb add <title> [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review] [--id EXTERNAL_ID]`
   - Example: `sb add "Setup database" --priority 1 --desc "Configure PostgreSQL" --parent sb-1`
   - `--needs-review`: marks the task as requiring human sign-off before it can be closed (see `finish`)
   - `--id EXTERNAL_ID`: assign a literal external ID (e.g. `--id B1XF-3213` to mirror a Jira ticket)
-- **`update <id> [field=value ...]`**
+- **`import`**: `sb import <file.md> [--parent ID] [--dry-run]`
+  - Bulk imports tasks from a Markdown checklist.
+  - Respects indentation for hierarchy.
+  - Skips duplicates (idempotent).
+- **`update`**: `sb update <id> [field=value ...]`
   - Fields: `title`, `desc`, `p` (priority), `status`, `parent`, `needs_review` (true|false)
   - Example: `sb update sb-1 p=0 needs_review=true`
 - **`begin <id> [--force-reopen]`**: Move task to Doing and capture current context
