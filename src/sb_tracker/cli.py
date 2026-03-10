@@ -2004,6 +2004,78 @@ def sync_doc(output_file=None, db_path=None):
         print(f"Error writing project log: {e}")
 
 
+def generate_handoff_report(issue_id=None, db_path=None):
+    db = load_db(db_path=db_path)
+    issues = db["issues"]
+    repo_root = get_repo_root()
+    if repo_root:
+        issues = [i for i in issues if i.get("repo") == repo_root]
+    
+    if not issues:
+        print("# AGENT HANDOFF REPORT\n\nNo tasks found for this repository.")
+        return
+
+    # Stats
+    done_count = len([i for i in issues if is_issue_done(i, db)])
+    total_count = len(issues)
+    
+    # Active Task
+    active_task = None
+    if issue_id:
+        active_task = next((i for i in issues if i["id"] == issue_id), None)
+    else:
+        # Default to the most recently updated 'Doing' task
+        doing_tasks = [i for i in issues if i["status"] == "Doing"]
+        if doing_tasks:
+            # We don't have a reliable updated_at yet, so just pick first
+            active_task = doing_tasks[0]
+
+    # Git State
+    git_status = _run_git(["status", "-s"], cwd=repo_root) or "No pending changes."
+    branch = get_repo_branch(cwd=repo_root) or "Unknown"
+
+    # Ready Queue
+    ready_queue = [i for i in issues if is_ready(i, db["issues"], db) and not is_issue_done(i, db)]
+    if active_task and active_task in ready_queue:
+        ready_queue.remove(active_task)
+
+    # Format Report
+    print("# AGENT HANDOFF REPORT")
+    print(f"\n**Progress:** {done_count}/{total_count} tasks completed")
+    print(f"**Branch:**   {branch}")
+    
+    if active_task:
+        print(f"\n## Active Task: {active_task['title']} ({active_task['id']})")
+        print(f"**Status:** {active_task['status']}")
+        if active_task.get("linked_files"):
+            print("**Linked Files:**")
+            for f in active_task["linked_files"]:
+                print(f"- {f}")
+        
+        # Last failure
+        last_fail = None
+        for e in reversed(active_task.get("events", [])):
+            if e["type"] == "verification_result" and e["exit_code"] != 0:
+                last_fail = e
+                break
+        if last_fail:
+            print("\n**Last Verification Failure:**")
+            print(f"Command: `{last_fail['command']}`")
+            print(f"```\n{last_fail['output']}\n```")
+    else:
+        print("\n## Active Task: None")
+
+    print("\n## Pending Git Changes")
+    print(f"```\n{git_status}\n```")
+
+    if ready_queue:
+        print("\n## Ready Queue (Next Steps)")
+        for i in ready_queue[:5]:
+            print(f"- [{i['id']}] {i['title']}")
+    
+    print("\n--- End of Handoff ---")
+
+
 def load_project_config():
     repo_root = get_repo_root()
     if not repo_root:
@@ -2129,6 +2201,7 @@ def print_help():
     print("  link <id> [branch=...] [worktree=...]   Link task to context")
     print("  promote <id>              Export task as Markdown")
     print("  doc [--file <PATH>]       Sync task log to Markdown file")
+    print("  handoff [<id>]            Generate agent transition report")
     print("  context <id> [--files]    Show hydration context for agents")
     print("  show <id> [--json]        Show issue details")
     print("  close <id>                Close/archive issue (marks task complete from any state)")
@@ -2463,6 +2536,10 @@ def main():
             else:
                 i += 1
         sync_doc(output_file=output_file, db_path=resolve_db_path())
+    elif cmd == "handoff":
+        args, opts = parse_common_flags(sys.argv[2:])
+        issue_id = args[0] if len(args) > 0 else None
+        generate_handoff_report(issue_id=issue_id, db_path=resolve_db_path())
     elif cmd == "context":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
