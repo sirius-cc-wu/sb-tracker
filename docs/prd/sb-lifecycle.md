@@ -39,7 +39,7 @@ We need a lightweight lifecycle model that:
 
 ### 4.2 Core Use Cases
 1. Agent starts implementation for a task and marks it `Doing` with one command.
-2. Agent hands off task for review with explicit transition.
+2. Task reaches `Review` status automatically upon successful verification or finishing.
 3. External hook (worktrunk/git/shell) sends lifecycle event to `sb`.
 4. User filters tasks by current branch/worktree during active development.
 
@@ -49,8 +49,7 @@ We need a lightweight lifecycle model that:
 Add commands:
 - `sb begin <id>`: move to `Doing` and capture current repo context.
 - `sb pause <id>`: move to `Ready`.
-- `sb review <id>`: move to `Review`.
-- `sb finish <id>`: move to `Done`.
+- `sb finish <id>`: move to `Done` (or `Review` if `@needs-review` is set).
 
 Rules:
 - No-op transitions must be safe and idempotent.
@@ -94,9 +93,8 @@ Canonical statuses:
 Transitions:
 1. `begin`: `Backlog|Ready|Review -> Doing`
 2. `pause`: `Doing -> Ready`
-3. `review`: `Doing -> Review`
-4. `finish`: `Doing -> Review` (when `needs_review=true`) or `Doing|Review -> Done`
-   - When a task has `needs_review=true`, `finish` from `Doing` stops at `Review` and prints a reminder.
+3. `finish`: `Doing -> Review` (when `needs_review=true`) or `Doing|Review -> Done`
+   - When a task has `needs_review=true`, `finish` (or successful `verify`) from `Doing` stops at `Review` and prints a reminder.
    - A second `finish` from `Review` always closes to `Done` (human has confirmed).
    - `close <id>` bypasses `needs_review` and force-closes from any state.
 
@@ -163,7 +161,7 @@ Design rule:
 ## 10. Testing Requirements
 
 ### 10.1 Unit Tests
-1. Transition logic for `begin/pause/review/finish` including no-op paths.
+1. Transition logic for `begin/pause/finish` including no-op paths.
 2. Event resolution by `--task`, by branch, by worktree, and ambiguity handling.
 3. Branch/worktree metadata capture correctness.
 

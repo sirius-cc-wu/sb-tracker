@@ -1099,8 +1099,6 @@ def _lifecycle_target(current_status, action, done_status, issue=None):
         return "Doing"
     if action == "pause":
         return "Ready" if current_status == "Doing" else None
-    if action == "review":
-        return "Review" if current_status == "Doing" else None
     if action == "finish":
         if current_status == "Review":
             return done_status
@@ -2194,9 +2192,8 @@ def print_help():
     print("  update <id> [field=val]   Update title, desc, p, status, parent")
     print("  begin <id> [--force-reopen]   Move task to Doing and capture context")
     print("  pause <id>                Move task to Ready")
-    print("  review <id>               Move task to Review")
     print("  verify <id> --cmd \"<CMD>\"  Run verification command and log result")
-    print("  finish <id>               Kanban transition: Doing/Review → Done state")
+    print("  finish <id>               Transition to Done (or Review if flagged)")
     print("  event <type> [--task <id>]    Record external lifecycle event")
     print("  link <id> [branch=...] [worktree=...]   Link task to context")
     print("  promote <id>              Export task as Markdown")
@@ -2447,12 +2444,6 @@ def main():
             print("Usage: sb pause <id>")
         else:
             lifecycle_action(args[0], "pause", db_path=resolve_db_path())
-    elif cmd == "review":
-        args, opts = parse_common_flags(sys.argv[2:])
-        if len(args) < 1:
-            print("Usage: sb review <id>")
-        else:
-            lifecycle_action(args[0], "review", db_path=resolve_db_path())
     elif cmd == "verify":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:

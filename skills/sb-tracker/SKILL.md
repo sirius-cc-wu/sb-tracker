@@ -35,13 +35,12 @@ DB behavior:
    ```bash
    sb begin <id>
    sb verify <id> --cmd "pytest ..."
-   sb review <id>
    sb finish <id>
    ```
    Use `sb pause <id>` if work is parked.
 
 3. **Observe & Repair**
-   - If verification fails, run `sb show <id>` to see the error context.
+   - If verification fails, run `sb context <id> --files` or `sb show <id>` to see the error context.
    - Iterate on code and re-run `sb verify`.
 
 4. **Close Session Cleanly**
@@ -64,9 +63,9 @@ sb config get prefix               # show effective prefix
 sb begin <id> [--force-reopen]
 sb verify <id> --cmd "<CMD>"       # Run verification and log result
 sb pause <id>
-sb review <id>
 sb finish <id>
 sb close <id>
+sb context <id> [--files]          # Hydration context for agents
 ```
 
 List and inspect:
@@ -88,7 +87,7 @@ Dependencies, context, and maintenance:
 
 ```bash
 sb dep <child_id> <parent_id> [--repo|--global]
-sb link <id> [branch=...] [worktree=...]
+sb link <id> [branch=...] [worktree=...] [file=...]
 sb event <switch|create|merge|remove> [--task <id>]
 sb promote <id>
 sb compact
@@ -135,12 +134,12 @@ IDs:
 - Configure prefix per-repo: `sb config prefix BNC` or globally: `sb config prefix SB --global`
 
 Completion:
-- Preferred lifecycle: `begin → review → finish` (requires task to be in Doing/Review)
+- Preferred lifecycle: `begin → verify → finish` (requires task to be in Doing/Review)
 - `sb close <id>` closes a task directly from any state, bypassing lifecycle validation
 
 `needs_review` flag:
 - Add `--needs-review` to `sb add` (or `sb update <id> needs_review=true`) to mark tasks that require human sign-off before closing.
-- When set, `sb finish` from `Doing` moves to `Review` and prints a reminder instead of closing.
+- When set, `sb finish` (or successful `verify`) from `Doing` moves to `Review` and prints a reminder instead of closing.
 - A second `sb finish` from `Review` always closes to `Done` (human has confirmed).
 - `sb close` ignores the flag and force-closes from any state.
 

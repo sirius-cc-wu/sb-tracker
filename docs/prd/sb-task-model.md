@@ -86,7 +86,7 @@ Rules:
 2. `close <id>` moves task to repo-configured done state.
 
 ### 7.4 Lifecycle
-1. `begin`, `pause`, `review`, `finish` provide explicit feature progression.
+1. `begin`, `pause`, `finish` provide explicit feature progression.
 2. `begin` captures live repo context from current workspace.
 3. `begin` on `Done` is no-op unless `--force-reopen`.
 

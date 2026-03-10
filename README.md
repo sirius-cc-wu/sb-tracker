@@ -14,7 +14,9 @@ A lightweight, standalone task tracker that stores state in a local SQLite datab
 - **Priority Levels**: Tasks support P0-P3 priority levels
 - **Kanban Workflow**: Configurable states and a board view
 - **Task Status Tracking**: Workflow status with timestamps
-- **Lifecycle Commands**: `begin/pause/review/finish` for explicit feature flow
+- **Lifecycle Commands**: `begin/pause/finish` for explicit feature flow
+- **Verification**: `verify` command to run tests and auto-advance status
+- **Context Hydration**: `context` command to aggregate task specs and files for agents
 - **Dependencies**: Link tasks with blocking dependencies
 - **Audit Log**: Track all changes to each task with timestamps
 - **JSON Export**: Machine-readable output for integration
@@ -129,9 +131,10 @@ sb close sb-1
   - Example: `sb update sb-1 p=0 needs_review=true`
 - **`begin <id> [--force-reopen]`**: Move task to Doing and capture current context
 - **`pause <id>`**: Move task from Doing to Ready
-- **`review <id>`**: Move task from Doing to Review
+- **`verify <id> --cmd "<CMD>"`**: Run tests and log results; auto-advances to `Review` or `Done` on success
 - **`finish <id>`**: Move task to Done; if task has `needs_review=true`, stops at Review first (run again from Review to close)
-- **`link <id> [branch=...] [worktree=...]`**: Bind task to branch/worktree context
+- **`context <id> [--files]`**: Show hydration context (spec, linked files, last failure) for agents
+- **`link <id> [branch=...] [worktree=...] [file=...]`**: Bind task to context or files
 - **`event <switch|create|merge|remove> [--task <id>]`**: Ingest external lifecycle event
 - **`dep <child_id> <parent_id>`**: Add a blocking dependency
   - Example: `sb dep sb-2 sb-1` (sb-2 blocked by sb-1)
@@ -147,7 +150,7 @@ sb close sb-1
 
 - **`show <id> [--json]`**: Display task details with audit log
 - **`board [--json]`**: Show issues grouped into Kanban columns
-- **`promote <id>`**: Optional Markdown summary of task and sub-tasks
+- **`promote <id>`**: Export Markdown summary of task and its history
 - **`stats`**: Overview of progress and priority breakdown
 - **`compact`**: Archive done tasks to save space
 - **`close <id>`**: Close task from any state (skips Kanban lifecycle validation)
@@ -172,10 +175,10 @@ sb close sb-1
    sb ready  # Show tasks with no blockers
    ```
 
-3. **Track Progress**: Update as you complete steps
+3. **Verify and Finish**: Run tests to auto-advance or finish manually
    ```bash
    sb begin sb-x9z8y
-   sb review sb-x9z8y
+   sb verify sb-x9z8y --cmd "pytest tests/test_feature.py"
    sb finish sb-x9z8y
    ```
 
@@ -187,7 +190,7 @@ sb close sb-1
    git commit -m "type(scope): description of change"
    sb list --all
    ```
-   Then provide a short summary of completed work and what remains.
+   Then provide a short summary of completed work and what remains using `sb promote <id>`.
 
 ### Lifecycle Workflow
 
@@ -196,10 +199,10 @@ Recommended explicit lifecycle:
 ```bash
 sb begin <id>     # start active work (Doing)
 sb pause <id>     # park work back to Ready
-sb review <id>    # hand off for review
 sb finish <id>    # complete work (Done)
 ```
 
+Use `sb verify <id> --cmd "..."` to automate the transition from Doing on success.
 `sb close <id>` closes a task directly from any state, bypassing the Doing/Review requirement of `finish` and ignoring `needs_review`.
 
 ### Optional Hook Adapters

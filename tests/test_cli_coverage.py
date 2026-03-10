@@ -78,7 +78,6 @@ def test_core_helper_paths(capsys):
     assert cli.get_worktree_path(cwd="/tmp/nope") is None
     assert cli._lifecycle_target("Backlog", "begin", "Done") == "Doing"
     assert cli._lifecycle_target("Doing", "pause", "Done") == "Ready"
-    assert cli._lifecycle_target("Doing", "review", "Done") == "Review"
     assert cli._lifecycle_target("Review", "finish", "Done") == "Done"
     assert cli._lifecycle_target("Done", "begin", "Done") is None
 
@@ -206,7 +205,6 @@ def test_functional_commands_cover_paths(tmp_path, monkeypatch, capsys):
     cli.lifecycle_action(parent_id, "begin", db_path=str(db_path))
     cli.lifecycle_action(parent_id, "pause", db_path=str(db_path))
     cli.lifecycle_action(parent_id, "begin", db_path=str(db_path))
-    cli.lifecycle_action(parent_id, "review", db_path=str(db_path))
     cli.lifecycle_action(parent_id, "finish", db_path=str(db_path))
     cli.lifecycle_action(parent_id, "begin", db_path=str(db_path))
     cli.lifecycle_action(parent_id, "begin", force_reopen=True, db_path=str(db_path))
@@ -249,7 +247,6 @@ def test_main_command_dispatch(tmp_path, monkeypatch, capsys):
         (["update"], "Usage: sb update"),
         (["begin"], "Usage: sb begin"),
         (["pause"], "Usage: sb pause"),
-        (["review"], "Usage: sb review"),
         (["finish"], "Usage: sb finish"),
         (["event"], "Usage: sb event"),
         (["link"], "Usage: sb link"),
@@ -274,7 +271,6 @@ def test_main_command_dispatch(tmp_path, monkeypatch, capsys):
     _run_main(monkeypatch, capsys, db_path, ["begin", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["pause", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["begin", issue_id])
-    _run_main(monkeypatch, capsys, db_path, ["review", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["finish", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["begin", issue_id, "--force-reopen"])
     _run_main(monkeypatch, capsys, db_path, ["link", issue_id, "branch=feature-main", f"worktree={tmp_path}"])
