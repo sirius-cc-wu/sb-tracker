@@ -28,10 +28,10 @@ Goal: Align with Git-based workflows and enforce quality.
     - Define project-level "Definition of Done" requirements.
     - Example: `sb finish` blocks unless `lint` and `test` verifications have passed.
 
-## Phase 3: Autonomous Handoff (Long Term)
+## Phase 3: Autonomous Handoff (In Progress)
 Goal: Seamless transitions between different agents and humans.
 
-- [ ] **`sb handoff`**:
+- [x] **`sb handoff`**:
     - Package the current task state, environment diffs, and verification logs into a "Handoff Bundle."
     - Allows a new agent session to resume with zero context loss.
 - [ ] **Telemetry Integration**:
