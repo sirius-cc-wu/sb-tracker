@@ -121,6 +121,7 @@ def test_storage_error_paths(tmp_path, monkeypatch):
 
 def test_legacy_json_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("SB_DB_PATH", raising=False)
     legacy = tmp_path / ".sb.json"
     legacy.write_text("{}", encoding="utf-8")
 

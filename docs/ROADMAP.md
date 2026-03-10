@@ -18,13 +18,13 @@ Goal: Minimize "Discovery" phase turns and token costs.
     - Associate specific file paths with a task.
     - Use `sb link <id> file=src/main.py`.
 
-## Phase 2: Visibility & Governance (Medium Term)
+## Phase 2: Visibility & Governance (Completed)
 Goal: Align with Git-based workflows and enforce quality.
 
-- [ ] **`sb doc` (Living History)**:
+- [x] **`sb doc` (Living History)**:
     - Sync the SQLite audit log to a version-controlled `PROJECT_LOG.md`.
     - Automatically generate "Human-Readable" summaries of work completed.
-- [ ] **`.sb/config.json` (Architectural Guardrails)**:
+- [x] **`.sb/config.json` (Architectural Guardrails)**:
     - Define project-level "Definition of Done" requirements.
     - Example: `sb finish` blocks unless `lint` and `test` verifications have passed.
 

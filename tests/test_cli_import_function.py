@@ -84,3 +84,15 @@ def test_import_tasks_idempotency(db_path, plan_file, capsys, monkeypatch):
     
     db = cli.load_db(str(db_path))
     assert len(db["issues"]) == 3
+
+def test_import_tasks_file_not_found(capsys):
+    cli.import_tasks("non_existent.md")
+    out, _ = capsys.readouterr()
+    assert "Error: File 'non_existent.md' not found" in out
+
+def test_import_tasks_empty_file(tmp_path, capsys):
+    empty_file = tmp_path / "empty.md"
+    empty_file.write_text("")
+    cli.import_tasks(str(empty_file))
+    out, _ = capsys.readouterr()
+    assert "No tasks found in file" in out
