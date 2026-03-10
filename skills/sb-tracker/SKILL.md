@@ -48,6 +48,14 @@ DB behavior:
    - Run `sb list --all`.
    - Share a brief handoff summary.
 
+If the repository also uses `spec-driver`, you can bootstrap a spec track from an `sb` issue with:
+
+```bash
+python3 skills/spec-driver/scripts/manage_specs.py add-from-sb <id>
+```
+
+This uses `sb show <id> --json` and preserves the `sb` issue ID as the spec track ID.
+
 ## Command Playbook
 
 Create and update:
