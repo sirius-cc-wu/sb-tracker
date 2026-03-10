@@ -31,6 +31,7 @@ def test_sqlite_round_trip(tmp_path):
 
 def test_legacy_json_file_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("SB_DB_PATH", raising=False)
     legacy_path = tmp_path / ".sb.json"
     legacy_path.write_text("{}", encoding="utf-8")
 

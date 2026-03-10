@@ -1138,6 +1138,20 @@ def lifecycle_action(issue_id, action, force_reopen=False, db_path=None):
         print(f"No changes for {issue_id}: task is Done (use --force-reopen to resume)")
         return
 
+    # Guardrails for "finish"
+    if action == "finish":
+        proj_config = load_project_config()
+        if proj_config.get("completion", {}).get("require_verification"):
+            # Check for successful verification
+            success_verify = any(
+                e.get("type") == "verification_result" and e.get("exit_code") == 0
+                for e in issue.get("events", [])
+            )
+            if not success_verify:
+                print(f"Error: Task {issue_id} cannot be finished without a successful verification.")
+                print(f"Run `sb verify {issue_id} --cmd \"<COMMAND>\"` to verify your work first.")
+                return
+
     target = _lifecycle_target(current_status, action, done_status, issue=issue)
     changed = False
     if target is not None:
@@ -1593,7 +1607,12 @@ def show_issue(
                 status = normalize_status(i["status"], config) or "Unmapped"
                 print(f"Status:      {status}")
                 print(f"Created:     {i['created_at']}")
+                if i.get("parent"):
+                    parent_issue = next((p for p in db["issues"] if p["id"] == i["parent"]), None)
+                    parent_title = parent_issue["title"] if parent_issue else "Unknown"
+                    print(f"Parent:      {parent_title} ({i['parent']})")
                 print(f"Depends On:  {', '.join(i.get('depends_on', [])) or 'None'}")
+
                 if i.get("needs_review"):
                     print("Needs Review: yes")
 
@@ -1910,6 +1929,251 @@ def show_context(issue_id, include_files=False, db_path=None):
     print("\n--- End of Context ---")
 
 
+def generate_doc_content(db, repo_filter=None):
+    issues = db["issues"]
+    if repo_filter:
+        issues = [i for i in issues if i.get("repo") == repo_filter]
+    
+    if not issues:
+        return "# Project Task Log\n\nNo tasks recorded for this repository."
+
+    # Sort issues: Done tasks at the bottom, newest first? 
+    # Or just ID/Priority sort. Let's do Priority then ID.
+    issues.sort(key=lambda x: (x.get("priority", 2), x["id"]))
+
+    lines = ["# Project Task Log", ""]
+    lines.append(f"Generated on: {datetime.now().isoformat().split('.')[0]}")
+    lines.append("")
+
+    for i in issues:
+        config = get_kanban_config(db, i.get("repo"))
+        status = normalize_status(i["status"], config) or "Unmapped"
+        
+        lines.append(f"### [{i['id']}] {i['title']}")
+        lines.append(f"**Status:** {status} | **Priority:** P{i.get('priority', 2)} | **Created:** {i['created_at'].split('T')[0]}")
+        
+        if i.get("description"):
+            lines.append("")
+            lines.append(i["description"])
+
+        # Verification History
+        verify_events = [e for e in i.get("events", []) if e["type"] == "verification_result"]
+        if verify_events:
+            lines.append("")
+            lines.append("#### Verification History")
+            for e in verify_events:
+                res = "PASS" if e["exit_code"] == 0 else f"FAIL ({e['exit_code']})"
+                ts = e["timestamp"].split("T")[0]
+                lines.append(f"- [{ts}] **{res}** (cmd: `{e['command']}`)")
+
+        # Status Timeline
+        status_events = [e for e in i.get("events", []) if e["type"] == "status_changed"]
+        if status_events:
+            lines.append("")
+            lines.append("#### Status Timeline")
+            for e in status_events:
+                ts = e["timestamp"].split("T")[0]
+                lines.append(f"- {ts}: {e['old']} -> {e['new']}")
+
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def sync_doc(output_file=None, db_path=None):
+    db = load_db(db_path=db_path)
+    repo_root = get_repo_root()
+    
+    if not output_file:
+        if not repo_root:
+            print("Error: No repo root found and no output file specified.")
+            return
+        output_file = os.path.join(repo_root, "PROJECT_LOG.md")
+
+    content = generate_doc_content(db, repo_filter=repo_root)
+    
+    try:
+        with open(output_file, "w") as f:
+            f.write(content)
+        print(f"Synced project log to: {output_file}")
+    except OSError as e:
+        print(f"Error writing project log: {e}")
+
+
+def generate_handoff_report(issue_id=None, db_path=None):
+    db = load_db(db_path=db_path)
+    issues = db["issues"]
+    repo_root = get_repo_root()
+    if repo_root:
+        issues = [i for i in issues if i.get("repo") == repo_root]
+    
+    if not issues:
+        print("# AGENT HANDOFF REPORT\n\nNo tasks found for this repository.")
+        return
+
+    # Stats
+    done_count = len([i for i in issues if is_issue_done(i, db)])
+    total_count = len(issues)
+    
+    # Active Task
+    active_task = None
+    if issue_id:
+        active_task = next((i for i in issues if i["id"] == issue_id), None)
+    else:
+        # Default to the most recently updated 'Doing' task
+        doing_tasks = [i for i in issues if i["status"] == "Doing"]
+        if doing_tasks:
+            # We don't have a reliable updated_at yet, so just pick first
+            active_task = doing_tasks[0]
+
+    # Git State
+    git_status = _run_git(["status", "-s"], cwd=repo_root) or "No pending changes."
+    branch = get_repo_branch(cwd=repo_root) or "Unknown"
+
+    # Ready Queue
+    ready_queue = [i for i in issues if is_ready(i, db["issues"], db) and not is_issue_done(i, db)]
+    if active_task and active_task in ready_queue:
+        ready_queue.remove(active_task)
+
+    # Format Report
+    print("# AGENT HANDOFF REPORT")
+    print(f"\n**Progress:** {done_count}/{total_count} tasks completed")
+    print(f"**Branch:**   {branch}")
+    
+    if active_task:
+        print(f"\n## Active Task: {active_task['title']} ({active_task['id']})")
+        print(f"**Status:** {active_task['status']}")
+        if active_task.get("linked_files"):
+            print("**Linked Files:**")
+            for f in active_task["linked_files"]:
+                print(f"- {f}")
+        
+        # Last failure
+        last_fail = None
+        for e in reversed(active_task.get("events", [])):
+            if e["type"] == "verification_result" and e["exit_code"] != 0:
+                last_fail = e
+                break
+        if last_fail:
+            print("\n**Last Verification Failure:**")
+            print(f"Command: `{last_fail['command']}`")
+            print(f"```\n{last_fail['output']}\n```")
+    else:
+        print("\n## Active Task: None")
+
+    print("\n## Pending Git Changes")
+    print(f"```\n{git_status}\n```")
+
+    if ready_queue:
+        print("\n## Ready Queue (Next Steps)")
+        for i in ready_queue[:5]:
+            print(f"- [{i['id']}] {i['title']}")
+    
+    print("\n--- End of Handoff ---")
+
+
+def load_project_config():
+    repo_root = get_repo_root()
+    if not repo_root:
+        return {}
+    
+    config_path = os.path.join(repo_root, ".sb", "config.json")
+    if not os.path.exists(config_path):
+        return {}
+    
+    try:
+        with open(config_path, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"Warning: Failed to load .sb/config.json: {e}", file=sys.stderr)
+        return {}
+
+
+def resolve_repo_filter(opts, cwd=None, default_current=False):
+    if opts["global_only"]:
+        return None
+    if opts["repo_current"]:
+        return get_repo_root(cwd=cwd)
+    if opts["repo"]:
+        repo_path = os.path.abspath(os.path.expanduser(opts["repo"]))
+        repo_root = get_repo_root(cwd=repo_path)
+        return repo_root or os.path.realpath(repo_path)
+    if default_current:
+        return get_repo_root(cwd=cwd)
+    return None
+
+
+def resolve_worktree_filter(opts, cwd=None):
+    if opts["global_only"]:
+        return None
+    if opts["worktree_current"]:
+        return get_worktree_path(cwd=cwd)
+    if opts["worktree"]:
+        worktree = os.path.abspath(os.path.expanduser(opts["worktree"]))
+        detected = get_worktree_path(cwd=worktree)
+        return detected or os.path.realpath(worktree)
+    return None
+
+
+def resolve_branch_filter(opts, cwd=None):
+    if opts["global_only"]:
+        return None
+    if opts["branch_current"]:
+        return get_repo_branch(cwd=cwd)
+    if opts["branch"]:
+        return opts["branch"]
+    return None
+
+
+def parse_common_flags(args):
+    opts = {
+        "global_only": False,
+        "repo": None,
+        "repo_current": False,
+        "branch": None,
+        "branch_current": False,
+        "worktree": None,
+        "worktree_current": False,
+    }
+    cleaned = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--global":
+            opts["global_only"] = True
+            i += 1
+            continue
+        if arg == "--repo":
+            if i + 1 < len(args) and not args[i + 1].startswith("-"):
+                opts["repo"] = args[i + 1]
+                i += 2
+            else:
+                opts["repo_current"] = True
+                i += 1
+            continue
+        if arg == "--branch":
+            if i + 1 < len(args) and not args[i + 1].startswith("-"):
+                opts["branch"] = args[i + 1]
+                i += 2
+            else:
+                opts["branch_current"] = True
+                i += 1
+            continue
+        if arg == "--worktree":
+            if i + 1 < len(args) and not args[i + 1].startswith("-"):
+                opts["worktree"] = args[i + 1]
+                i += 2
+            else:
+                opts["worktree_current"] = True
+                i += 1
+            continue
+        cleaned.append(arg)
+        i += 1
+    return cleaned, opts
+
+
 def print_help():
 
 
@@ -1933,6 +2197,8 @@ def print_help():
     print("  event <type> [--task <id>]    Record external lifecycle event")
     print("  link <id> [branch=...] [worktree=...]   Link task to context")
     print("  promote <id>              Export task as Markdown")
+    print("  doc [--file <PATH>]       Sync task log to Markdown file")
+    print("  handoff [<id>]            Generate agent transition report")
     print("  context <id> [--files]    Show hydration context for agents")
     print("  show <id> [--json]        Show issue details")
     print("  close <id>                Close/archive issue (marks task complete from any state)")
@@ -1952,85 +2218,6 @@ def main():
     if len(sys.argv) < 2 or sys.argv[1] in ["help", "--help", "-h"]:
         print_help()
         return
-
-    def parse_common_flags(args):
-        opts = {
-            "global_only": False,
-            "repo": None,
-            "repo_current": False,
-            "branch": None,
-            "branch_current": False,
-            "worktree": None,
-            "worktree_current": False,
-        }
-        cleaned = []
-        i = 0
-        while i < len(args):
-            arg = args[i]
-            if arg == "--global":
-                opts["global_only"] = True
-                i += 1
-                continue
-            if arg == "--repo":
-                if i + 1 < len(args) and not args[i + 1].startswith("-"):
-                    opts["repo"] = args[i + 1]
-                    i += 2
-                else:
-                    opts["repo_current"] = True
-                    i += 1
-                continue
-            if arg == "--branch":
-                if i + 1 < len(args) and not args[i + 1].startswith("-"):
-                    opts["branch"] = args[i + 1]
-                    i += 2
-                else:
-                    opts["branch_current"] = True
-                    i += 1
-                continue
-            if arg == "--worktree":
-                if i + 1 < len(args) and not args[i + 1].startswith("-"):
-                    opts["worktree"] = args[i + 1]
-                    i += 2
-                else:
-                    opts["worktree_current"] = True
-                    i += 1
-                continue
-            cleaned.append(arg)
-            i += 1
-        return cleaned, opts
-
-    def resolve_repo_filter(opts, cwd=None, default_current=False):
-        if opts["global_only"]:
-            return None
-        if opts["repo_current"]:
-            return get_repo_root(cwd=cwd)
-        if opts["repo"]:
-            repo_path = os.path.abspath(os.path.expanduser(opts["repo"]))
-            repo_root = get_repo_root(cwd=repo_path)
-            return repo_root or os.path.realpath(repo_path)
-        if default_current:
-            return get_repo_root(cwd=cwd)
-        return None
-
-    def resolve_worktree_filter(opts, cwd=None):
-        if opts["global_only"]:
-            return None
-        if opts["worktree_current"]:
-            return get_worktree_path(cwd=cwd)
-        if opts["worktree"]:
-            worktree = os.path.abspath(os.path.expanduser(opts["worktree"]))
-            detected = get_worktree_path(cwd=worktree)
-            return detected or os.path.realpath(worktree)
-        return None
-
-    def resolve_branch_filter(opts, cwd=None):
-        if opts["global_only"]:
-            return None
-        if opts["branch_current"]:
-            return get_repo_branch(cwd=cwd)
-        if opts["branch"]:
-            return opts["branch"]
-        return None
 
     cmd = sys.argv[1]
     if cmd in ["version", "--version", "-v"]:
@@ -2329,6 +2516,21 @@ def main():
             print("Usage: sb promote <id>")
         else:
             promote_issue(args[0], db_path=resolve_db_path())
+    elif cmd == "doc":
+        args, opts = parse_common_flags(sys.argv[2:])
+        output_file = None
+        i = 0
+        while i < len(args):
+            if args[i] == "--file" and i + 1 < len(args):
+                output_file = args[i + 1]
+                i += 2
+            else:
+                i += 1
+        sync_doc(output_file=output_file, db_path=resolve_db_path())
+    elif cmd == "handoff":
+        args, opts = parse_common_flags(sys.argv[2:])
+        issue_id = args[0] if len(args) > 0 else None
+        generate_handoff_report(issue_id=issue_id, db_path=resolve_db_path())
     elif cmd == "context":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:

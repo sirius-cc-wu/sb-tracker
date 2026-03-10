@@ -65,3 +65,35 @@ def test_verify_with_needs_review(db_path, capsys):
     task = db["issues"][0]
     # Should be Review, not Done
     assert task["status"] == "Review"
+
+def test_verify_issue_not_found(db_path, capsys):
+    cli.run_verification("missing", "echo", db_path=db_path)
+    out, _ = capsys.readouterr()
+    assert "Error: Issue missing not found" in out
+
+def test_verify_command_error(db_path, capsys):
+    cli.add("Bad Cmd", db_path=db_path)
+    db = cli.load_db(db_path=db_path)
+    task_id = db["issues"][0]["id"]
+    
+    # Run verify with an invalid command
+    cli.run_verification(task_id, "non_existent_command_12345", db_path=db_path)
+    out, _ = capsys.readouterr()
+    assert "Verification FAILED" in out
+    
+    db = cli.load_db(db_path=db_path)
+    task = db["issues"][0]
+    assert any(e["type"] == "verification_result" for e in task["events"])
+
+def test_verify_output_truncation(db_path, capsys):
+    cli.add("Large Output", db_path=db_path)
+    db = cli.load_db(db_path=db_path)
+    task_id = db["issues"][0]["id"]
+    
+    # Run verify with command that produces large output
+    cli.run_verification(task_id, "python3 -c 'print(\"A\" * 3000)'", db_path=db_path)
+    
+    db = cli.load_db(db_path=db_path)
+    event = next(e for e in db["issues"][0]["events"] if e["type"] == "verification_result")
+    assert len(event["output"]) < 3000
+    assert "... (output truncated)" in event["output"]
