@@ -2,7 +2,7 @@
 
 This document outlines the strategic direction for `sb-tracker` to become the definitive "harness" for autonomous, long-horizon development agents, as inspired by OpenAI's research.
 
-## Current State (v0.6.0)
+## Current State (v0.7.0)
 - [x] **Durable Project Memory**: SQLite-backed persistent state.
 - [x] **Task Hierarchy**: Tree-view visualization.
 - [x] **Plan Ingestion**: `sb import` command for Markdown plans.
