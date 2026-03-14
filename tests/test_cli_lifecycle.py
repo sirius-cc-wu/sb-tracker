@@ -79,6 +79,22 @@ def test_finish_from_done_prints_noop_guidance_and_records_blocked_event(db_path
     assert finish_events[-1]["result"] == "blocked"
 
 
+def test_begin_force_reopen_moves_done_task_back_to_doing(db_path, capsys):
+    cli.add("Task 1", db_path=db_path)
+    task_id = cli.load_db(db_path=db_path)["issues"][0]["id"]
+    cli.set_status(task_id, "Done", db_path=db_path)
+    capsys.readouterr()
+
+    cli.lifecycle_action(task_id, "begin", force_reopen=True, db_path=db_path)
+    out, _ = capsys.readouterr()
+
+    assert f"Updated {task_id} status to Doing" in out
+    task = cli.load_db(db_path=db_path)["issues"][0]
+    assert task["status"] == "Doing"
+    begin_events = [e for e in task["events"] if e["type"] == "lifecycle_begin"]
+    assert begin_events[-1]["result"] == "updated"
+
+
 def test_pause_from_ready_prints_guidance_and_keeps_status(db_path, capsys):
     cli.add("Task 1", db_path=db_path)
     task_id = cli.load_db(db_path=db_path)["issues"][0]["id"]
@@ -114,3 +130,15 @@ def test_lifecycle_action_missing_issue_prints_not_found(db_path, capsys):
     out, _ = capsys.readouterr()
 
     assert "Error: Issue sb-missing not found." in out
+
+
+def test_link_issue_reports_missing_issue_and_usage(db_path, capsys):
+    cli.link_issue("sb-missing", branch="feature-x", db_path=db_path)
+    out, _ = capsys.readouterr()
+    assert "Error: Issue sb-missing not found." in out
+
+    cli.add("Task 1", db_path=db_path)
+    task_id = cli.load_db(db_path=db_path)["issues"][0]["id"]
+    cli.link_issue(task_id, db_path=db_path)
+    out, _ = capsys.readouterr()
+    assert "Usage: sb link <id>" in out

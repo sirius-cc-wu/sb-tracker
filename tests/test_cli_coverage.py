@@ -297,7 +297,8 @@ def test_main_command_dispatch(tmp_path, monkeypatch, capsys):
     _run_main(monkeypatch, capsys, db_path, ["pause", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["begin", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["finish", issue_id])
-    _run_main(monkeypatch, capsys, db_path, ["begin", issue_id, "--force-reopen"])
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["begin", issue_id, "--force-reopen"])
+    assert "Updated" in out
     _run_main(monkeypatch, capsys, db_path, ["link", issue_id, "branch=feature-main", f"worktree={tmp_path}"])
     _run_main(monkeypatch, capsys, db_path, ["event", "switch", "--task", issue_id])
     _run_main(monkeypatch, capsys, db_path, ["ready", "--json"])

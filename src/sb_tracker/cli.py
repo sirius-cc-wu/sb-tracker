@@ -1265,7 +1265,10 @@ def lifecycle_action(issue_id, action, force_reopen=False, db_path=None):
         return
 
     event_name = f"lifecycle_{action}"
-    target = _lifecycle_target(current_status, action, done_status, issue=issue)
+    if action == "begin" and current_status == done_status and force_reopen:
+        target = "Doing"
+    else:
+        target = _lifecycle_target(current_status, action, done_status, issue=issue)
     if target is None and action in ("pause", "finish"):
         _touch_lifecycle(issue, event_name)
         _persist_lifecycle_blocked(
