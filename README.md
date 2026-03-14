@@ -101,8 +101,9 @@ Work a task through the normal lifecycle:
 ```bash
 sb begin sb-1
 sb verify sb-1 --cmd "pytest -q"
-sb finish sb-1
 ```
+
+If verification succeeds, the task usually auto-advances to `Done` (or `Review` when `--needs-review` is set), so a separate `sb finish` is typically only needed for manual closure or the final `Review -> Done` step.
 
 ## Commands
 
@@ -134,7 +135,10 @@ sb finish sb-1
   - Intended for metadata edits and state repair. Prefer `begin` / `verify` / `finish` for normal lifecycle transitions.
 - **`begin <id> [--force-reopen]`**: Move task to Doing and capture current context
 - **`pause <id>`**: Move task from Doing to Ready
-- **`verify <id> --cmd "<CMD>"`**: Run tests and log results; auto-advances to `Review` or `Done` on success
+- **`verify <id> --cmd "<CMD>" [--timeout SECONDS]`**: Run tests and log results; auto-advances to `Review` or `Done` on success
+  - Default timeout is 300 seconds
+  - Use `--timeout 0` to disable the timeout for long-running verification
+  - The `sb` process now exits nonzero when verification fails or times out, so shell chains like `sb verify ... && sb finish ...` stop safely
 - **`finish <id>`**: Complete the normal lifecycle transition for an active task. Expected source state is `Doing` (or `Review` for the final close). If `needs_review=true`, `finish` from `Doing` stops at `Review` first; run again from `Review` to close.
 - **`context <id> [--files]`**: Show hydration context (spec, linked files, last failure) for agents
 - **`link <id> [branch=...] [worktree=...] [file=...]`**: Bind task to context or files
@@ -161,6 +165,9 @@ sb finish sb-1
 - **`config prefix <PREFIX>`**: Set ID prefix for current repo (e.g. `sb config prefix BNC`)
 - **`config prefix <PREFIX> --global`**: Set global default prefix
 - **`config get prefix`**: Show effective prefix for the current context
+- **`config verify-timeout <SECONDS>`**: Set the default verify timeout for the current repo
+- **`config verify-timeout <SECONDS> --global`**: Set the global default verify timeout
+- **`config get verify-timeout`**: Show the effective verify timeout for the current context
 
 ## Workflow
 
@@ -179,11 +186,12 @@ sb finish sb-1
    ```
 
 3. **Verify and Finish**: Run tests to auto-advance or finish manually
-   ```bash
-   sb begin sb-x9z8y
-   sb verify sb-x9z8y --cmd "pytest tests/test_feature.py"
-   sb finish sb-x9z8y
-   ```
+```bash
+sb begin sb-x9z8y
+sb verify sb-x9z8y --cmd "pytest tests/test_feature.py"
+```
+
+If the verify command succeeds, the task is already advanced for you. Use `sb finish` when you need to close a task manually or move a `Review` task to `Done`.
 
 4. **End session cleanly**: Verify final state and hand off
    ```bash
@@ -203,13 +211,14 @@ Recommended explicit lifecycle:
 sb ready                         # pick work with no unresolved blockers
 sb begin <id>                    # start active work (Doing)
 sb verify <id> --cmd "pytest"    # record verification and auto-advance on success
-sb finish <id>                   # close active work (Doing -> Review/Done, or Review -> Done)
+sb finish <id>                   # optional manual close, or Review -> Done
 sb pause <id>                    # park work back to Ready
 ```
 
 Use `sb verify <id> --cmd "..."` to automate the transition from Doing on success.
 Notes:
 - `sb finish` is for tasks already in active lifecycle states. If a task is still `Backlog` or `Ready`, run `sb begin <id>` first.
+- `sb verify` defaults to a 300-second timeout. Use `--timeout <seconds>` to override it, or `--timeout 0` to disable the timeout entirely.
 - If `sb finish` does not advance a task, inspect `sb show <id>` before using `sb update`.
 `sb close <id>` closes a task directly from any state, bypassing the Doing/Review requirement of `finish` and ignoring `needs_review`.
 

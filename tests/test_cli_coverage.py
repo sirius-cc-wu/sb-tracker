@@ -76,6 +76,32 @@ def test_core_helper_paths(capsys):
 
     assert cli.get_repo_branch(cwd="/tmp/nope") is None
     assert cli.get_worktree_path(cwd="/tmp/nope") is None
+    assert cli._coerce_verify_timeout("15") == 15
+    assert cli._coerce_verify_timeout("-1") is None
+    assert cli._resolve_verify_timeout({"meta": {"verify_timeout": 9}}, None) == 9
+    assert (
+        cli._resolve_verify_timeout(
+            {"meta": {"verify_timeout": 9, "verify_timeout_by_repo": {"/tmp/repo": 0}}},
+            "/tmp/repo",
+        )
+        == 0
+    )
+    assert cli._resolve_verify_timeout({"meta": {"verify_timeout": 9}}, None, override=5) == 5
+    assert cli._verify_timeout_source({"meta": {"verify_timeout": 9}}, None) == (9, "global")
+    assert (
+        cli._verify_timeout_source(
+            {"meta": {"verify_timeout": 9, "verify_timeout_by_repo": {"/tmp/repo": 0}}},
+            "/tmp/repo",
+        )
+        == (0, "repo")
+    )
+    assert cli._format_verify_timeout(0) == "no timeout"
+    assert cli._format_verify_timeout(1) == "1 second"
+    assert cli._shell_exit_code_from_verification(0) == 0
+    assert cli._shell_exit_code_from_verification(-1) == cli.VERIFY_TIMEOUT_EXIT_CODE
+    assert cli._shell_exit_code_from_verification(-2) == 2
+    assert cli._shell_exit_code_from_verification(-9) == 137
+    assert cli._shell_exit_code_from_verification(300) == 1
     assert cli._lifecycle_target("Backlog", "begin", "Done") == "Doing"
     assert cli._lifecycle_target("Doing", "pause", "Done") == "Ready"
     assert cli._lifecycle_target("Review", "finish", "Done") == "Done"
@@ -604,6 +630,12 @@ def test_config_command(tmp_path, monkeypatch, capsys):
     out, _ = _run_main(monkeypatch, capsys, db_path, ["config", "get", "prefix"])
     assert "BNC" in out
 
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["config", "verify-timeout", "0", "--global"])
+    assert "no timeout" in out
+
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["config", "get", "verify-timeout"])
+    assert "no timeout" in out
+
     # Set repo prefix (no git repo here, so it errors gracefully)
     out, _ = _run_main(monkeypatch, capsys, db_path, ["config", "prefix", "SB"])
     # Either sets it (if git detected) or prints an error — both are valid
@@ -623,3 +655,29 @@ def test_config_command(tmp_path, monkeypatch, capsys):
     # Duplicate --id rejected
     out, _ = _run_main(monkeypatch, capsys, db_path, ["add", "--global", "dup", "--id", "PROJ-999"])
     assert "already exists" in out
+
+
+def test_verify_timeout_config_command_repo_scope(tmp_path, monkeypatch, capsys):
+    db_path = tmp_path / "db.sqlite"
+    monkeypatch.setattr(cli, "get_repo_root", lambda cwd=None: "/tmp/repo")
+
+    _run_main(monkeypatch, capsys, db_path, ["init"])
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["config", "verify-timeout", "12"])
+    assert "12 seconds" in out
+    assert "/tmp/repo" in out
+
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["config", "get", "verify-timeout"])
+    assert "12 seconds" in out
+    assert "from repo" in out
+
+
+def test_verify_timeout_config_command_errors_without_repo(tmp_path, monkeypatch, capsys):
+    db_path = tmp_path / "db.sqlite"
+    _run_main(monkeypatch, capsys, db_path, ["init"])
+    monkeypatch.setattr(cli, "get_repo_root", lambda cwd=None: None)
+
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["config", "verify-timeout", "12"])
+    assert "Use --global to set the global verify timeout" in out
+
+    out, _ = _run_main(monkeypatch, capsys, db_path, ["config", "verify-timeout", "bad", "--global"])
+    assert "verify timeout must be a non-negative integer" in out

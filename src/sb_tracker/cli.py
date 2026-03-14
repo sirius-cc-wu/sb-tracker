@@ -18,6 +18,8 @@ DEFAULT_DB_PATH = "~/.sb.sqlite"
 LEGACY_JSON_DB_PATH = "~/.sb.json"
 VALID_EVENT_TYPES = {"switch", "create", "merge", "remove"}
 COMPACT_RETENTION_DAYS = 90
+DEFAULT_VERIFY_TIMEOUT = 300
+VERIFY_TIMEOUT_EXIT_CODE = 124
 
 
 def _default_db_state():
@@ -137,6 +139,21 @@ def _ensure_db_shape(db):
         meta["id_prefix"] = "sb"
     if "prefix_by_repo" not in meta or not isinstance(meta["prefix_by_repo"], dict):
         meta["prefix_by_repo"] = {}
+    verify_timeout = _coerce_verify_timeout(meta.get("verify_timeout"))
+    meta["verify_timeout"] = (
+        DEFAULT_VERIFY_TIMEOUT if verify_timeout is None else verify_timeout
+    )
+    verify_timeout_by_repo = meta.get("verify_timeout_by_repo")
+    if not isinstance(verify_timeout_by_repo, dict):
+        verify_timeout_by_repo = {}
+    normalized_verify_timeout_by_repo = {}
+    for repo_root, timeout_value in verify_timeout_by_repo.items():
+        if not isinstance(repo_root, str):
+            continue
+        normalized_timeout = _coerce_verify_timeout(timeout_value)
+        if normalized_timeout is not None:
+            normalized_verify_timeout_by_repo[repo_root] = normalized_timeout
+    meta["verify_timeout_by_repo"] = normalized_verify_timeout_by_repo
     if "kanban" not in meta or not isinstance(meta["kanban"], dict):
         meta["kanban"] = {
             "columns": ["Backlog", "Ready", "Doing", "Review", "Done"],
@@ -252,6 +269,26 @@ def _next_hash_id(issues, title, description, created_at, prefix="sb"):
     raise RuntimeError("failed to generate unique hash ID")
 
 
+def _coerce_verify_timeout(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        timeout = value
+    elif isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            timeout = int(raw)
+        except ValueError:
+            return None
+    else:
+        return None
+    if timeout < 0:
+        return None
+    return timeout
+
+
 def _resolve_prefix(db, repo=None):
     meta = db.get("meta", {})
     if repo:
@@ -259,6 +296,63 @@ def _resolve_prefix(db, repo=None):
         if repo_prefix:
             return repo_prefix
     return meta.get("id_prefix", "sb")
+
+
+def _resolve_verify_timeout(db, repo=None, override=None):
+    override_timeout = _coerce_verify_timeout(override)
+    if override_timeout is not None:
+        return override_timeout
+
+    meta = db.get("meta", {})
+    if repo:
+        repo_timeout = _coerce_verify_timeout(
+            meta.get("verify_timeout_by_repo", {}).get(repo)
+        )
+        if repo_timeout is not None:
+            return repo_timeout
+
+    global_timeout = _coerce_verify_timeout(meta.get("verify_timeout"))
+    if global_timeout is not None:
+        return global_timeout
+    return DEFAULT_VERIFY_TIMEOUT
+
+
+def _verify_timeout_source(db, repo=None):
+    meta = db.get("meta", {})
+    if repo:
+        repo_timeout = _coerce_verify_timeout(
+            meta.get("verify_timeout_by_repo", {}).get(repo)
+        )
+        if repo_timeout is not None:
+            return repo_timeout, "repo"
+    global_timeout = _coerce_verify_timeout(meta.get("verify_timeout"))
+    if global_timeout is not None:
+        return global_timeout, "global"
+    return DEFAULT_VERIFY_TIMEOUT, "default"
+
+
+def _format_verify_timeout(timeout_seconds):
+    if timeout_seconds == 0:
+        return "no timeout"
+    suffix = "second" if timeout_seconds == 1 else "seconds"
+    return f"{timeout_seconds} {suffix}"
+
+
+def _shell_exit_code_from_verification(exit_code):
+    if exit_code == 0:
+        return 0
+    if exit_code == -1:
+        return VERIFY_TIMEOUT_EXIT_CODE
+    if exit_code == -2:
+        return 2
+    if exit_code < 0:
+        signal_number = abs(exit_code)
+        if signal_number <= 127:
+            return 128 + signal_number
+        return 1
+    if exit_code <= 255:
+        return exit_code
+    return 1
 
 
 def _next_top_level_id(db, title, description, created_at, repo=None):
@@ -1821,14 +1915,18 @@ def import_tasks(file_path, parent_id=None, dry_run=False, db_path=None):
 
 
 
-def run_verification(issue_id, command, db_path=None):
+def run_verification(issue_id, command, timeout_seconds=None, db_path=None):
     db = load_db(db_path=db_path)
     issue = next((i for i in db["issues"] if i["id"] == issue_id), None)
     if not issue:
         print(f"Error: Issue {issue_id} not found.")
-        return
+        return 2
 
+    effective_timeout = _resolve_verify_timeout(
+        db, issue.get("repo"), override=timeout_seconds
+    )
     print(f"Verifying {issue_id} using command: {command}")
+    print(f"Timeout: {_format_verify_timeout(effective_timeout)}")
     
     try:
         # Run the command and capture output
@@ -1839,13 +1937,19 @@ def run_verification(issue_id, command, db_path=None):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, # Merge stderr into stdout
             text=True,
-            timeout=300 # 5 minute timeout for safety
+            timeout=None if effective_timeout == 0 else effective_timeout,
         )
         output = result.stdout
         exit_code = result.returncode
     except subprocess.TimeoutExpired:
-        print(f"Error: Verification timed out after 5 minutes.")
-        output = "Verification timed out."
+        print(
+            f"Error: Verification timed out after "
+            f"{_format_verify_timeout(effective_timeout)}."
+        )
+        output = (
+            f"Verification timed out after "
+            f"{_format_verify_timeout(effective_timeout)}."
+        )
         exit_code = -1
     except Exception as e:
         print(f"Error executing command: {e}")
@@ -1880,9 +1984,10 @@ def run_verification(issue_id, command, db_path=None):
         # Ensure task remains in Doing or moves to Doing if it was in Backlog/Ready
         current_status = normalize_status(issue.get("status"), config)
         if current_status in (config["backlog"], "Ready"):
-             _apply_status_change(issue, "Doing", config)
+            _apply_status_change(issue, "Doing", config)
 
     save_db(db, db_path=db_path)
+    return exit_code
 
 
 def show_context(issue_id, include_files=False, db_path=None):
@@ -1971,7 +2076,7 @@ def print_help():
     print("  update <id> [field=val]   Update metadata; use for repair, not normal lifecycle")
     print("  begin <id> [--force-reopen]   Move task to Doing and capture context")
     print("  pause <id>                Move task to Ready")
-    print("  verify <id> --cmd \"<CMD>\"  Run verification command and log result")
+    print("  verify <id> --cmd \"<CMD>\" [--timeout <SECONDS>]  Run verification command and log result")
     print("  finish <id>               Transition active work to Done (or Review if flagged)")
     print("  event <type> [--task <id>]    Record external lifecycle event")
     print("  link <id> [branch=...] [worktree=...]   Link task to context")
@@ -1982,7 +2087,10 @@ def print_help():
     print("  rm <id>                   Delete issue")
     print("  config prefix <PREFIX>    Set ID prefix for current repo (e.g. BNC)")
     print("  config prefix <PREFIX> --global  Set global default ID prefix")
+    print("  config verify-timeout <SECONDS>    Set repo verify timeout (`0` disables timeout)")
+    print("  config verify-timeout <SECONDS> --global  Set global default verify timeout")
     print("  config get prefix         Show effective ID prefix")
+    print("  config get verify-timeout Show effective verify timeout")
     print("  version                   Show version")
     print("")
     print("Lifecycle workflow:")
@@ -2017,11 +2125,12 @@ def print_command_help(command):
             "If the task is not currently Doing, inspect it with `sb show <id>`.",
         ],
         "verify": [
-            "Usage: sb verify <id> --cmd \"<command>\"",
+            "Usage: sb verify <id> --cmd \"<command>\" [--timeout <seconds>]",
             "",
             "Run a verification command and record its result on the task.",
             "On success, the task auto-advances to Review or Done.",
             "On failure, the task remains in Doing for repair.",
+            "Use `--timeout 0` to disable the timeout for long-running verification.",
         ],
         "finish": [
             "Usage: sb finish <id>",
@@ -2376,17 +2485,32 @@ def main():
         else:
             issue_id = args[0]
             command = None
+            timeout_seconds = None
             i = 1
             while i < len(args):
                 if args[i] == "--cmd" and i + 1 < len(args):
                     command = args[i + 1]
+                    i += 2
+                elif args[i] == "--timeout" and i + 1 < len(args):
+                    timeout_seconds = _coerce_verify_timeout(args[i + 1])
+                    if timeout_seconds is None:
+                        print("Error: verify timeout must be a non-negative integer.")
+                        print_command_help("verify")
+                        return
                     i += 2
                 else:
                     i += 1
             if not command:
                 print_command_help("verify")
             else:
-                run_verification(issue_id, command, db_path=resolve_db_path())
+                exit_code = run_verification(
+                    issue_id,
+                    command,
+                    timeout_seconds=timeout_seconds,
+                    db_path=resolve_db_path(),
+                )
+                if exit_code != 0:
+                    raise SystemExit(_shell_exit_code_from_verification(exit_code))
     elif cmd == "finish":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
@@ -2497,13 +2621,23 @@ def main():
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 2:
             print("Usage: sb config prefix <PREFIX> [--global]")
+            print("       sb config verify-timeout <SECONDS> [--global]")
             print("       sb config get prefix")
+            print("       sb config get verify-timeout")
         elif args[0] == "get" and args[1] == "prefix":
             db = load_db(db_path=resolve_db_path())
             repo = resolve_repo_filter(opts, default_current=True)
             prefix = _resolve_prefix(db, repo)
             source = "repo" if (repo and db["meta"].get("prefix_by_repo", {}).get(repo)) else "global"
             print(f"Effective prefix: {prefix} (from {source})")
+        elif args[0] == "get" and args[1] == "verify-timeout":
+            db = load_db(db_path=resolve_db_path())
+            repo = resolve_repo_filter(opts, default_current=True)
+            timeout_value, source = _verify_timeout_source(db, repo)
+            print(
+                f"Effective verify timeout: "
+                f"{_format_verify_timeout(timeout_value)} (from {source})"
+            )
         elif args[0] == "prefix":
             raw_prefix = args[1].rstrip("-").upper()
             db = load_db(db_path=resolve_db_path())
@@ -2519,9 +2653,40 @@ def main():
                 db["meta"].setdefault("prefix_by_repo", {})[repo] = raw_prefix
                 save_db(db, db_path=resolve_db_path())
                 print(f"Prefix for {repo} set to: {raw_prefix}")
+        elif args[0] == "verify-timeout":
+            timeout_value = _coerce_verify_timeout(args[1])
+            if timeout_value is None:
+                print(
+                    "Error: verify timeout must be a non-negative integer "
+                    "(use `0` to disable the timeout)."
+                )
+                return
+            db = load_db(db_path=resolve_db_path())
+            if opts["global_only"]:
+                db["meta"]["verify_timeout"] = timeout_value
+                save_db(db, db_path=resolve_db_path())
+                print(
+                    f"Global verify timeout set to: "
+                    f"{_format_verify_timeout(timeout_value)}"
+                )
+            else:
+                repo = resolve_repo_filter(opts, default_current=True)
+                if not repo:
+                    print(
+                        "Error: not inside a git repo. Use --global to set the global verify timeout."
+                    )
+                    return
+                db["meta"].setdefault("verify_timeout_by_repo", {})[repo] = timeout_value
+                save_db(db, db_path=resolve_db_path())
+                print(
+                    f"Verify timeout for {repo} set to: "
+                    f"{_format_verify_timeout(timeout_value)}"
+                )
         else:
             print("Usage: sb config prefix <PREFIX> [--global]")
+            print("       sb config verify-timeout <SECONDS> [--global]")
             print("       sb config get prefix")
+            print("       sb config get verify-timeout")
     else:
         print(f"Unknown command: {cmd}")
 
