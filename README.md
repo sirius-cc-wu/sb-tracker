@@ -96,10 +96,12 @@ sb list --repo       # Show tasks for current repo
 sb list --global     # Show tasks not tied to any repo
 ```
 
-Complete a task:
+Work a task through the normal lifecycle:
 
 ```bash
-sb close sb-1
+sb begin sb-1
+sb verify sb-1 --cmd "pytest -q"
+sb finish sb-1
 ```
 
 ## Commands
@@ -129,10 +131,11 @@ sb close sb-1
 - **`update`**: `sb update <id> [field=value ...]`
   - Fields: `title`, `desc`, `p` (priority), `status`, `parent`, `needs_review` (true|false)
   - Example: `sb update sb-1 p=0 needs_review=true`
+  - Intended for metadata edits and state repair. Prefer `begin` / `verify` / `finish` for normal lifecycle transitions.
 - **`begin <id> [--force-reopen]`**: Move task to Doing and capture current context
 - **`pause <id>`**: Move task from Doing to Ready
 - **`verify <id> --cmd "<CMD>"`**: Run tests and log results; auto-advances to `Review` or `Done` on success
-- **`finish <id>`**: Move task to Done; if task has `needs_review=true`, stops at Review first (run again from Review to close)
+- **`finish <id>`**: Complete the normal lifecycle transition for an active task. Expected source state is `Doing` (or `Review` for the final close). If `needs_review=true`, `finish` from `Doing` stops at `Review` first; run again from `Review` to close.
 - **`context <id> [--files]`**: Show hydration context (spec, linked files, last failure) for agents
 - **`link <id> [branch=...] [worktree=...] [file=...]`**: Bind task to context or files
 - **`event <switch|create|merge|remove> [--task <id>]`**: Ingest external lifecycle event
@@ -197,12 +200,17 @@ sb close sb-1
 Recommended explicit lifecycle:
 
 ```bash
-sb begin <id>     # start active work (Doing)
-sb pause <id>     # park work back to Ready
-sb finish <id>    # complete work (Done)
+sb ready                         # pick work with no unresolved blockers
+sb begin <id>                    # start active work (Doing)
+sb verify <id> --cmd "pytest"    # record verification and auto-advance on success
+sb finish <id>                   # close active work (Doing -> Review/Done, or Review -> Done)
+sb pause <id>                    # park work back to Ready
 ```
 
 Use `sb verify <id> --cmd "..."` to automate the transition from Doing on success.
+Notes:
+- `sb finish` is for tasks already in active lifecycle states. If a task is still `Backlog` or `Ready`, run `sb begin <id>` first.
+- If `sb finish` does not advance a task, inspect `sb show <id>` before using `sb update`.
 `sb close <id>` closes a task directly from any state, bypassing the Doing/Review requirement of `finish` and ignoring `needs_review`.
 
 ### Optional Hook Adapters
@@ -407,6 +415,18 @@ sb init
 Make sure you're using the correct task ID:
 ```bash
 $ sb list --json   # See all task IDs
+```
+
+### `sb finish` does not advance a task
+
+`sb finish` is meant for tasks that are already in `Doing` or `Review`.
+If the task is still in `Backlog` or `Ready`, start it first:
+
+```bash
+sb show <id>
+sb begin <id>
+sb verify <id> --cmd "pytest -q"
+sb finish <id>
 ```
 
 ### Compaction

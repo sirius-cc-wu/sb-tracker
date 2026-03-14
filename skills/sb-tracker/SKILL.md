@@ -1,6 +1,6 @@
 ---
 name: sb-tracker
-description: Track work with the `sb` CLI by creating, updating, listing, and completing tasks with priorities, dependencies, and repo/global filters. Use for any coding agent that needs a lightweight task tracker for long-running or multi-step work, context recovery across sessions, or end-of-session handoff.
+description: Manage work with the `sb` CLI using its lifecycle commands: `sb ready`, `sb begin`, `sb verify`, `sb finish`, `sb pause`, `sb show`, plus task creation and metadata updates when needed. Use for long-running or multi-step work, context recovery across sessions, or end-of-session handoff.
 ---
 
 # SB Tracker
@@ -41,6 +41,7 @@ DB behavior:
 
 3. **Observe & Repair**
    - If verification fails, run `sb context <id> --files` or `sb show <id>` to see the error context.
+   - If `sb finish <id>` does not advance the task, inspect `sb show <id>` before attempting repair.
    - Iterate on code and re-run `sb verify`.
 
 4. **Close Session Cleanly**
@@ -64,14 +65,14 @@ Create and update:
 sb init
 sb add "Task Title" [--priority/-p N] [--desc/-d TEXT] [--parent ID] [--needs-review] [--id EXTERNAL_ID]
 sb import <file.md> [--parent ID] [--dry-run]
-sb update <id> [title=...] [desc=...] [p=...] [status=...] [parent=...] [needs_review=true|false]
+sb update <id> [title=...] [desc=...] [p=...] [status=...] [parent=...] [needs_review=true|false]   # metadata edits or explicit state repair
 sb config prefix <PREFIX>          # set prefix for current repo (e.g. BNC)
 sb config prefix <PREFIX> --global # set global default prefix
 sb config get prefix               # show effective prefix
 sb begin <id> [--force-reopen]
 sb verify <id> --cmd "<CMD>"       # Run verification and log result
 sb pause <id>
-sb finish <id>
+sb finish <id>                     # Normal close-out path for active tasks
 sb close <id>
 sb context <id> [--files]          # Hydration context for agents
 ```
@@ -142,7 +143,8 @@ IDs:
 - Configure prefix per-repo: `sb config prefix BNC` or globally: `sb config prefix SB --global`
 
 Completion:
-- Preferred lifecycle: `begin → verify → finish` (requires task to be in Doing/Review)
+- Preferred lifecycle: `ready/add → begin → verify → finish`
+- If `finish` does not advance the task, inspect `sb show <id>` before falling back to `sb update`.
 - `sb close <id>` closes a task directly from any state, bypassing lifecycle validation
 
 `needs_review` flag:
@@ -156,6 +158,7 @@ Completion:
 1. File follow-up work as explicit tasks/subtasks.
 2. Verify implementation (tests/screenshots as applicable).
 3. Move task status out of ambiguous states; complete done work (`finish` or `close`).
+   - If `finish` is a no-op, check `sb show <id>` and repair deliberately; do not assume the task closed.
 4. Optionally run `sb compact` to prune done items.
 5. Commit code changes (use the `commit` skill if available, otherwise `git add -A && git commit -m "..."`).
 6. Run `sb list --all` and confirm task state clarity.
@@ -166,3 +169,4 @@ Completion:
 - Do not leave completed work untracked; always close or split into follow-up tasks.
 - Do not leave tasks stuck in `Doing`/`Review` at session end without explicit intent.
 - Prefer repo-aware filters (`--repo`) when inside a repository; use `--global` for non-repo work.
+- Prefer `begin` / `verify` / `finish` for lifecycle transitions; reserve `update status=...` for recovery and admin edits.

@@ -1120,6 +1120,38 @@ def _persist_lifecycle_outcome(db, issue, issue_id, event_name, changed, db_path
         print(f"No changes for {issue_id}")
 
 
+def _persist_lifecycle_blocked(db, issue, issue_id, event_name, reason, db_path):
+    log_event(
+        issue,
+        event_name,
+        {
+            "result": "blocked",
+            "status": issue.get("status"),
+            "reason": reason,
+        },
+    )
+    save_db(db, db_path=db_path)
+
+
+def _print_lifecycle_guidance(issue_id, action, current_status, done_status):
+    if action == "finish" and current_status == done_status:
+        print(f"No changes for {issue_id}: task is already {done_status}")
+        return
+    if action == "finish":
+        print(f"Error: cannot finish task {issue_id} from status {current_status}.")
+        if current_status in ("Backlog", "Ready"):
+            print(
+                f"Hint: run `sb begin {issue_id}` first, then "
+                f"`sb verify {issue_id} --cmd \"...\"` or `sb finish {issue_id}`."
+            )
+        else:
+            print(f"Hint: run `sb show {issue_id}` to inspect lifecycle state.")
+        return
+    if action == "pause":
+        print(f"Error: cannot pause task {issue_id} from status {current_status}.")
+        print(f"Hint: only tasks in Doing can be paused. Run `sb show {issue_id}` for details.")
+
+
 def lifecycle_action(issue_id, action, force_reopen=False, db_path=None):
     db = load_db(db_path=db_path)
     issue = next((i for i in db["issues"] if i["id"] == issue_id), None)
@@ -1138,7 +1170,21 @@ def lifecycle_action(issue_id, action, force_reopen=False, db_path=None):
         print(f"No changes for {issue_id}: task is Done (use --force-reopen to resume)")
         return
 
+    event_name = f"lifecycle_{action}"
     target = _lifecycle_target(current_status, action, done_status, issue=issue)
+    if target is None and action in ("pause", "finish"):
+        _touch_lifecycle(issue, event_name)
+        _persist_lifecycle_blocked(
+            db,
+            issue,
+            issue_id,
+            event_name,
+            reason="invalid_transition",
+            db_path=db_path,
+        )
+        _print_lifecycle_guidance(issue_id, action, current_status, done_status)
+        return
+
     changed = False
     if target is not None:
         changed = _apply_status_change(issue, target, config)
@@ -1148,7 +1194,6 @@ def lifecycle_action(issue_id, action, force_reopen=False, db_path=None):
     if action == "begin":
         context_changed = _apply_context_to_issue(issue, _capture_context_from_cwd())
 
-    event_name = f"lifecycle_{action}"
     changed_any = changed or context_changed
     _touch_lifecycle(issue, event_name, started=(action == "begin" and changed_any))
     _persist_lifecycle_outcome(db, issue, issue_id, event_name, changed_any, db_path)
@@ -1911,8 +1956,6 @@ def show_context(issue_id, include_files=False, db_path=None):
 
 
 def print_help():
-
-
     print("Usage: sb <command> [args]")
     print("Commands:")
     print("  init                      Initialize database (global by default)")
@@ -1925,11 +1968,11 @@ def print_help():
     print("  stats                     Show task statistics")
     print(f"  compact                   Remove done issues older than {COMPACT_RETENTION_DAYS} days")
     print("  dep <child> <parent>      Add dependency")
-    print("  update <id> [field=val]   Update title, desc, p, status, parent")
+    print("  update <id> [field=val]   Update metadata; use for repair, not normal lifecycle")
     print("  begin <id> [--force-reopen]   Move task to Doing and capture context")
     print("  pause <id>                Move task to Ready")
     print("  verify <id> --cmd \"<CMD>\"  Run verification command and log result")
-    print("  finish <id>               Transition to Done (or Review if flagged)")
+    print("  finish <id>               Transition active work to Done (or Review if flagged)")
     print("  event <type> [--task <id>]    Record external lifecycle event")
     print("  link <id> [branch=...] [worktree=...]   Link task to context")
     print("  promote <id>              Export task as Markdown")
@@ -1941,11 +1984,77 @@ def print_help():
     print("  config prefix <PREFIX> --global  Set global default ID prefix")
     print("  config get prefix         Show effective ID prefix")
     print("  version                   Show version")
+    print("")
+    print("Lifecycle workflow:")
+    print("  ready -> begin -> verify -> finish")
+    print("           ^                    |")
+    print("           |------ pause -------|")
+    print("Notes:")
+    print("  - Use `sb <command> --help` for command-specific help")
+    print("  - Prefer begin/verify/finish for lifecycle changes; use update for metadata edits or recovery")
     print("\nGlobal tracker flags:")
     print("  --repo [path]             Filter by repo (default: current repo)")
     print("  --branch [name]           Filter by branch (default: current branch)")
     print("  --worktree [path]         Filter by worktree (default: current worktree)")
     print("  --global                  Filter only tasks with no repo")
+
+
+def print_command_help(command):
+    help_map = {
+        "begin": [
+            "Usage: sb begin <id> [--force-reopen]",
+            "",
+            "Move a task into Doing and capture current repo context.",
+            "Use this before making code or documentation changes.",
+            "",
+            "Options:",
+            "  --force-reopen   Re-open a Done task and resume active work.",
+        ],
+        "pause": [
+            "Usage: sb pause <id>",
+            "",
+            "Move a Doing task back to Ready.",
+            "If the task is not currently Doing, inspect it with `sb show <id>`.",
+        ],
+        "verify": [
+            "Usage: sb verify <id> --cmd \"<command>\"",
+            "",
+            "Run a verification command and record its result on the task.",
+            "On success, the task auto-advances to Review or Done.",
+            "On failure, the task remains in Doing for repair.",
+        ],
+        "finish": [
+            "Usage: sb finish <id>",
+            "",
+            "Complete the normal lifecycle transition for an active task.",
+            "Expected source states:",
+            "  Doing  -> Done",
+            "  Doing  -> Review   (if needs_review=true)",
+            "  Review -> Done",
+            "",
+            "If the task is still Backlog or Ready, run `sb begin <id>` first.",
+            "Use `sb show <id>` if the task does not advance.",
+        ],
+        "update": [
+            "Usage: sb update <id> [field=value ...]",
+            "",
+            "Update task metadata such as title, desc, priority, parent, or status.",
+            "Prefer `begin` / `verify` / `finish` for normal lifecycle transitions.",
+            "Use `update` mainly for metadata maintenance or state repair.",
+        ],
+        "show": [
+            "Usage: sb show <id> [--json]",
+            "",
+            "Show task details, lifecycle state, dependencies, and event history.",
+            "Use this when diagnosing why a lifecycle command did not advance the task.",
+        ],
+    }
+    lines = help_map.get(command)
+    if not lines:
+        print_help()
+        return
+    for line in lines:
+        print(line)
 
 
 def main():
@@ -2033,6 +2142,9 @@ def main():
         return None
 
     cmd = sys.argv[1]
+    if len(sys.argv) >= 3 and sys.argv[2] in ["help", "--help", "-h"]:
+        print_command_help(cmd)
+        return
     if cmd in ["version", "--version", "-v"]:
         import sb_tracker
 
@@ -2248,19 +2360,19 @@ def main():
         force_reopen = "--force-reopen" in args
         args = [a for a in args if a != "--force-reopen"]
         if len(args) < 1:
-            print("Usage: sb begin <id> [--force-reopen]")
+            print_command_help("begin")
         else:
             lifecycle_action(args[0], "begin", force_reopen=force_reopen, db_path=resolve_db_path())
     elif cmd == "pause":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
-            print("Usage: sb pause <id>")
+            print_command_help("pause")
         else:
             lifecycle_action(args[0], "pause", db_path=resolve_db_path())
     elif cmd == "verify":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
-            print("Usage: sb verify <id> --cmd \"<command>\"")
+            print_command_help("verify")
         else:
             issue_id = args[0]
             command = None
@@ -2272,13 +2384,13 @@ def main():
                 else:
                     i += 1
             if not command:
-                print("Usage: sb verify <id> --cmd \"<command>\"")
+                print_command_help("verify")
             else:
                 run_verification(issue_id, command, db_path=resolve_db_path())
     elif cmd == "finish":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
-            print("Usage: sb finish <id>")
+            print_command_help("finish")
         else:
             lifecycle_action(args[0], "finish", db_path=resolve_db_path())
     elif cmd == "event":
@@ -2358,7 +2470,7 @@ def main():
     elif cmd == "show":
         args, opts = parse_common_flags(sys.argv[2:])
         if len(args) < 1:
-            print("Usage: sb show <id> [--json]")
+            print_command_help("show")
         else:
             as_json = "--json" in args
             repo_filter = resolve_repo_filter(opts)

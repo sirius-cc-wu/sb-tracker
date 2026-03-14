@@ -1,11 +1,11 @@
 import pytest
-import os
+
 from sb_tracker import cli
 
 @pytest.fixture
-def db_path(tmp_path):
+def db_path(tmp_path, monkeypatch):
     path = tmp_path / "test.sqlite"
-    os.environ["SB_DB_PATH"] = str(path)
+    monkeypatch.setenv("SB_DB_PATH", str(path))
     cli.init()
     return str(path)
 
